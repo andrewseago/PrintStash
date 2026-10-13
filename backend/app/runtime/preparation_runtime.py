@@ -11,6 +11,8 @@ from app.core.work_priority import current_priority
 from app.runtime.native_admission import LocalResourcePool, NativePermit, Resources
 from app.runtime.native_runtime import current_permit as current_native_permit
 
+HOST_PERMIT_ENV = "PRINTSTASH_THUMBNAIL_HOST_PERMIT_FD"
+HOST_PATH_ENV = "PRINTSTASH_THUMBNAIL_HOST_PERMIT_PATH"
 PERMIT_ENV = "PRINTSTASH_PREPARATION_PERMIT_FD"
 PERMIT_PATH_ENV = "PRINTSTASH_PREPARATION_PERMIT_PATH"
 
@@ -19,6 +21,8 @@ PERMIT_PATH_ENV = "PRINTSTASH_PREPARATION_PERMIT_PATH"
 class PreparationPools:
     prepared: LocalResourcePool
     io: LocalResourcePool
+    host: LocalResourcePool
+    codec: LocalResourcePool
 
 
 def make_pools(directory: Path, io_directory: Path) -> PreparationPools:
@@ -33,7 +37,10 @@ def make_pools(directory: Path, io_directory: Path) -> PreparationPools:
                 raise
 
     return PreparationPools(
-        LocalResourcePool(directory, reclaim=reclaim), LocalResourcePool(io_directory)
+        LocalResourcePool(directory, reclaim=reclaim),
+        LocalResourcePool(io_directory),
+        LocalResourcePool(directory.parent / "thumbnail-host"),
+        LocalResourcePool(directory.parent / "thumbnail-codec"),
     )
 
 
@@ -95,3 +102,50 @@ def io_slot(slots: int, *, checkpoint: Callable[[], None]) -> Iterator[None]:
         priority=current_priority(),
     ):
         yield
+
+
+def current_host_permit() -> NativePermit | None:
+    return getattr(_local, "host_permit", None)
+
+
+@contextmanager
+def reserve_host(
+    request: Resources, capacity: Resources, *, checkpoint: Callable[[], None]
+) -> Iterator[NativePermit]:
+    """Source custody precedes the host window, which precedes native work."""
+    if current_permit() is None or current_native_permit() is not None:
+        raise RuntimeError("thumbnail host memory requires prepared source custody")
+    if current_host_permit() is not None:
+        raise RuntimeError("thumbnail host memory already reserved")
+    with _bound().host.reserve(
+        request, capacity, checkpoint=checkpoint, priority=current_priority()
+    ) as permit:
+        _local.host_permit = permit
+        try:
+            yield permit
+        finally:
+            del _local.host_permit
+
+
+@contextmanager
+def reserve_codec(*, checkpoint: Callable[[], None]) -> Iterator[None]:
+    """Finish one retained frame without queueing behind parser memory claims.
+
+    This single process-shared CPU slot is additional to the parser slots. All
+    codec RAM is already charged to the host permit, which survives encoding.
+    No parser credit may be held: the bounded completion lane cannot admit source
+    parsing or recursively wait for itself.
+    """
+    if current_host_permit() is None or current_native_permit() is not None:
+        raise RuntimeError("codec requires host custody after parser release")
+    if getattr(_local, "codec_active", False):
+        raise RuntimeError("codec admission cannot be nested")
+    amount = Resources(1, 1)
+    with _bound().codec.reserve(
+        amount, amount, checkpoint=checkpoint, priority=current_priority()
+    ):
+        _local.codec_active = True
+        try:
+            yield
+        finally:
+            del _local.codec_active

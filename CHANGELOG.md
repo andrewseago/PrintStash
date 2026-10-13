@@ -25,6 +25,40 @@
   size and a "Load 3D preview" action instead. Shared links and the similar
   Models comparison follow the same rule.
 
+### Performance
+
+- A file in a bulk upload now waits when the server is busy instead of failing. Session creation was limited to 30 per minute, which held a 200-file drop to one file every two seconds and failed files that arrived faster; that limit now bounds a runaway client (600 per minute) and staging admission paces real uploads.
+
+- Halve the CPU an idle installation spends polling its job queues: lanes nobody waits on (search, maintenance, notifications, similarity, captions, expansion) are looked at every two seconds (`VAULT_JOBS_RELAXED_QUEUE_POLL_INTERVAL_SECONDS`) instead of four times a second.
+
+- Do less database work per uploaded file on SQLite: keep connections pooled instead of reopening them under load (`VAULT_SQLITE_POOL_SIZE`), open the job engine's own SQLite file in write-ahead mode, stop writing a row-level audit entry for every job, reconciler-cursor and capacity-claim heartbeat, check a step's ownership without taking the write lock, and report commit stages only for files slow enough to watch. Cancellation is noticed within half a second and worker memory is sampled ten times a second.
+
+- Release prepared thumbnail parsers before GPU eligibility/dispatch instead of repeating broker status inside each disposable process. Keep model publication ahead of background DBOS captures, preserve guarded recovery from the same geometry packet, use compact exact OBJ corner keys, and skip STL preflight scans that cannot change the minimum memory claim.
+
+- Simplify source geometry preparation and native supervision: load qualified OBJ directly, bound text admission without parsing coordinates twice, avoid redundant vertex/edge sorting, and reuse a narrow cancellation query with fresh results. Keep native settings minimal and sample each staged worker's RAM once. A fixed 250-source WSL GPU comparison improves from 497.090 to 358.937 seconds (27.79%, using the longer of the two recorded clocks in the final repeat; first candidate: 357.279 seconds), preserving all metadata, 238 byte-identical images and the same 12 invalid-source outcomes; CPU-only geometry uses the same preparation path.
+
+- Decode ASCII STL geometry once for both CPU-only and GPU-enabled ingestion, retaining bounded source blocks instead of reparsing for allocation. Preserve exact source measurements, validation and output images. The fresh 250-source GPU comparison reduces elapsed time by 2.77%; a repeated three-source CPU-only probe improves by 29.02%.
+
+- Share a single bounded source-worker execution between measurements and previews. Basic STL measurements use source-precision arrays without importing Trimesh, preserving topology and signed-volume evidence; OBJ/CAD and optional fingerprints retain their specialized analysis. Eligible small previews now prepare normals on GPU while analytic views keep their canonical policy. Preserve identical metadata and original-file integrity.
+
+- Reduce repeated compute fingerprinting and admission-ticket decoding, give cold GPU ownership its bounded startup allowance, retain canonical STL bounds without gathering another vertex array, and compile worker application bytecode during image builds. Count bounded OBJ sources under separate CPU/wall budgets so scheduling contention does not unnecessarily serialize the RAM pool.
+
+- Render compact indexed triangles with GPU bounds/framing and visual position welding, grouping model uploads and drawing into one bounded submission per batch. Retain multiple geometries in VRAM and repair degenerate normal neighborhoods locally. Release an eligible disposable parser after clean reap, then render prepared geometry and encode final pixels in the owning Job without another encoder process. Retain explicit host/CPU credit through completion; GPU refusal uses a guarded renderer without reparsing. Unready devices, unmatched qualification, insufficient headroom and optional fingerprint work retain the combined worker. Preserve publication fences and reject empty GPU frames through the existing CPU recovery path. Assemble immutable geometry packets without repeated full-buffer copies. Avoid repeated framing/encoding of validated renderer output and use quality-85/method-2 lossy WebP with exact alpha and a codec completion slot independent of parser admission; thumbnail/visual recipes track the changed rendering semantics.
+
+- Prepare large render meshes with portable GPU normal accumulation and indexed packing, using guarded per-model CPU fallback and shared RAM/VRAM accounting. Keep canonical analytic preparation separate, reuse resident GPU state, and encode accelerated WebP through the same canonical preview encoder. Version changed thumbnail and visual recipes while preserving authoritative measurements and source bytes.
+
+- Coalesce independently admitted thumbnail work across Models, preserve per-item cancellation and deadlines, and report actual model/frame batch sizes. Keep disposable worker priorities across process startup, bound OBJ/ASCII STL admission preflight, avoid redundant mesh copies, topology work and unused worker imports, and reduce durable queue dispatch latency without changing concurrency or backfill ownership.
+
+- Drive native OpenDAL source reads through its asynchronous API so slow remote storage does not retain the Python GIL. Preserve bounded streaming and conditional reads, and interrupt waits at the existing cancellation and scan deadlines.
+
+- Keep GPU thumbnail resampling, alpha conversion and vignette on the device after an exact canonical canary. Download only final pixels, avoid timeout-mode socket polling delays, and reuse validated geometry through bounded binary references instead of repeated base64 transfers. Retire completed broker references so evicted geometry can release host RAM while the owner remains idle.
+
+- GPU thumbnail evaluation can use Mesa OpenGL/D3D12 entirely inside Docker/WSL, with hardware verification independent of GPU brand. A persistent render owner reuses geometry and shaders, batches up to eight ready frames per readback, and caches repeated shaded views. Evaluation remains distinct from automatic performance qualification and operator visual acceptance; CPU fallback stays available.
+
+- Correct shared-edge opacity in portable GPU rendering; document physical RTX 5060 probes and the remaining WSL Dozen/ONNX compatibility blocker.
+
+- Optional portable compute broker for qualified WebGPU rendering and ONNX inference, resident geometry/model reuse, bounded tensor batching and administrator diagnostics. CPU-only installations retain normal ingestion. Physical GPU combinations remain unqualified pending quality, end-to-end performance and recovery gates.
+
 - Enable mesh preview readiness after its first rendered frame; verify overlay alignment, display-mode pixels, and repeated resource cleanup on WebGL/WebGPU.
 
 - Extend native mesh preview checks for camera movement, screenshot scales, capture failures, and disposal; retain WebGPU as experimental after baseline comparison.
@@ -85,7 +119,7 @@
 
 - Serialize search-preference writes before reading SQLite state, avoiding failures
   when background processing commits concurrently.
-- Reduce thumbnail transfer size with quality-90 WebP color and lossless transparency,
+- Reduce thumbnail transfer size with quality-85 WebP color and lossless transparency,
   preserving resolution and regenerating existing mesh/G-code previews through Jobs.
 - Restore remembered Library branches in bounded batches, prioritize visible thumbnails,
   and keep deeply nested folders selectable on narrow screens. Load the multipart
@@ -386,6 +420,12 @@ See [the upgrade guide](UPGRADE.md#unreleased-dbos-30).
   will be removed in 0.16.
 
 ### Fixed
+
+- Preserve remote scan deadlines when native metadata or streaming reads time out, so bounded imports continue instead of entering provider-error backoff.
+
+- Continue manual remote-library scans across bounded pages and time slices using durable requests committed with the saved cursor. Cancellation and provider backoff remain distinct from normal continuation.
+
+- Normalize S3 library listing timestamps to HTTP HEAD precision so unchanged Cloudflare R2 models can be indexed; retain size, ETag, version and post-download change checks.
 
 - Keep admitted editor state while setup navigation is checked, retire it on rejection, and show legacy local/S3 storage details.
 

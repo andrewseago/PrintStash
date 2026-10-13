@@ -395,6 +395,7 @@ on the API for your provider:
 | `VAULT_STAGING_MIN_FREE_GB` | `1` | Minimum free disk space for staging. |
 | `VAULT_MEDIA_WORKER_TIMEOUT_SECONDS` | `180` | Media worker timeout. |
 | `VAULT_SQLITE_SYNCHRONOUS` | `NORMAL` | SQLite durability mode. |
+| `VAULT_SQLITE_POOL_SIZE` | `24` | SQLite connections kept open. Each holds a parsed schema and page cache (a few MiB); one reopened under load costs a schema parse per use. |
 | `VAULT_LOG_LEVEL` | `INFO` | API logging level. |
 | `VAULT_SLOW_REQUEST_MS` | `1000` | Log a warning for requests at or above this duration in milliseconds. Response `Server-Timing` reports total and SQL time plus SQL statement count; pair it with `X-Request-ID` when diagnosing latency. |
 | `VAULT_BACKUP_RETENTION_DAYS` | `30` | Local backup retention in days. |
@@ -572,3 +573,18 @@ blocks subsequent attempts, retries, regeneration and audit repairs for that
 group. Re-enabling discovers eligible missing work through the bounded source;
 it preserves retry budgets and deliberate cancellations. Similar Models has its
 own settings. ASCII toolpaths continue to use the Artifact's text directly.
+
+Optional qualified GPU execution, settings and device exposure are described in [compute deployment](compute.md).
+
+
+### Optional GPU thumbnail evaluation
+
+Build the backend with `PRINTSTASH_VARIANT=gpu-render` for wgpu rendering without
+the ONNX WebGPU plugin. `VAULT_COMPUTE_BACKEND=auto|vulkan|opengl` selects the native
+graphics backend; auto uses Mesa OpenGL/D3D12 on WSL. The default
+`VAULT_COMPUTE_RENDER_POLICY=qualified` requires measured operation receipts.
+`preview` enables bounded hardware evaluation for the administrator's visual
+review, without asserting quality or speed. `VAULT_COMPUTE_MODE=cpu` overrides it.
+Follow [compute deployment](compute.md) for Docker device/library mounts and
+private evaluation volumes. The minimal CPU image and public ingestion response
+shapes are unchanged.

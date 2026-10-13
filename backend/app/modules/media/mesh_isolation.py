@@ -31,16 +31,17 @@ import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+from dataclasses import asdict, replace
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from printstash_core.mesh.measurements import decode_volume, encode_volume
 from printstash_core.mesh.similarity import GeometryError
 
 from app import __file__ as application_file
 from app.core.cancellation import OperationCancelled, checkpoint
-from app.core.config import _overlay, settings
+from app.core.native_settings import settings
 from app.modules.media import mesh_policy, native_process
 from app.modules.media.fingerprints import (
     FingerprintRecord,
@@ -50,6 +51,7 @@ from app.modules.media.fingerprints import (
 from app.modules.media.mesh_contracts import (
     GeometryNotRequested,
     MeshMeasurements,
+    PreviewCoverage,
     ThumbnailFailureReason,
     ThumbnailRequest,
     ThumbnailResult,
@@ -65,6 +67,7 @@ from app.modules.media.mesh_protocol import (
     GeometryOutput,
     MeshProtocolError,
     OutputSink,
+    PreparedThumbnailOutput,
     ThumbnailOutput,
 )
 from app.modules.media.mesh_telemetry import (
@@ -85,6 +88,7 @@ from app.modules.media.native_budget import (
 )
 from app.modules.media.native_execution import admission
 from app.modules.media.worker_bootstrap import (
+    PRIORITY_ENV,
     RESOURCE_EXIT,
     WorkerLifecycle,
     launch_resources,
@@ -95,9 +99,18 @@ from app.modules.media.worker_bootstrap import command as worker_command
 from app.runtime.native_admission import NativePermit, Resources
 from app.runtime.native_runtime import current_permit
 
+if TYPE_CHECKING:
+    from app.modules.media.thumbnail_handoff import ThumbnailHandoff
+    from app.modules.media.thumbnail_packet import PacketDescriptor
+
 REPLY_MAGIC = b"MSH1"
 MAX_REPLY_BYTES = 32 * 1024 * 1024
-_POLL_SECONDS = 0.025
+# Output wakes the supervisor at once; this is only how often it samples the
+# worker's memory and looks for a cancel or deadline while the worker is quiet.
+# The worker's own address-space limit is the hard ceiling in between.
+_POLL_SECONDS = 0.1
+# After the reply ends, only the exit status is awaited.
+_REAP_POLL_SECONDS = 0.01
 
 
 class MeshWorkerError(Exception):
@@ -419,6 +432,8 @@ def supervise_result(
     assert temporary_path is not None
     if not temporary_path.is_dir():
         raise ValueError("worker temporary directory must exist")
+    from app.core.work_priority import current_priority
+
     inherited = launch_resources(permit) if permit is not None else None
     try:
         try:
@@ -437,6 +452,7 @@ def supervise_result(
                     "MKL_NUM_THREADS": "1",
                     "NUMEXPR_NUM_THREADS": "1",
                     "TMPDIR": str(temporary_path),
+                    PRIORITY_ENV: current_priority().value,
                     **(inherited.environment if inherited is not None else {}),
                 },
                 cwd=Path(application_file).resolve().parent.parent,
@@ -468,13 +484,19 @@ def supervise_result(
                 if time.monotonic() >= deadline:
                     cause = WorkerExitCause.DEADLINE
                     raise MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
-                rss = native_process.process_tree_rss_bytes(process.pid)
-                if rss is not None:
-                    peak_rss = rss if peak_rss is None else max(peak_rss, rss)
-                    if rss > memory_budget:
-                        cause = WorkerExitCause.MEMORY_LIMIT
-                        raise MeshWorkerError(ThumbnailFailureReason.RESOURCE_LIMIT)
-                for key, _ in selector.select(_POLL_SECONDS):
+                # Staged publication already has an independent RSS monitor.
+                # Keep a single sampler for that tree, including while callbacks
+                # block; duplicate /proc walks only contend with useful work.
+                if watchdog is None:
+                    rss = native_process.process_tree_rss_bytes(process.pid)
+                    if rss is not None:
+                        peak_rss = rss if peak_rss is None else max(peak_rss, rss)
+                        if rss > memory_budget:
+                            cause = WorkerExitCause.MEMORY_LIMIT
+                            raise MeshWorkerError(ThumbnailFailureReason.RESOURCE_LIMIT)
+                for key, _ in selector.select(
+                    _REAP_POLL_SECONDS if stdout_closed else _POLL_SECONDS
+                ):
                     chunk = os.read(key.fd, 65536)
                     if not chunk:
                         stdout_closed = True
@@ -622,6 +644,8 @@ def runtime_overrides() -> dict[str, str | int | float | bool]:
     configured differently. Only scalars cross: every setting the worker reads
     is one.
     """
+    from app.core.config import _overlay
+
     return {
         key: value
         for key, value in dict(_overlay).items()
@@ -667,8 +691,20 @@ def _run_worker(
     sources: tuple[MeshSource, ...],
     work: WorkProfile,
     on_chunk: Callable[[bytes], None] | None = None,
+    deadline: float | None = None,
 ) -> SupervisedReply:
     """Plan a weighted native allowance, then run one supervised worker."""
+    from app.runtime.compute.client import warm_render
+
+    def check() -> None:
+        checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
+
+    check()
+    if isinstance(work, (RasterWork, AnalysisWork)):
+        warm_render()
+        check()
     existing = current_permit()
     capacity = Resources(native_process.native_capacity().slots, memory_budget_bytes())
     amount = (
@@ -676,16 +712,27 @@ def _run_worker(
         if existing is not None
         else estimate_sources(capacity, sources, work=work)
     )
-    with admission(amount, capacity, checkpoint=checkpoint) as permit:
+    with admission(amount, capacity, checkpoint=check) as permit:
+        check()
+        if module == "app.modules.media.mesh_worker":
+            from app.core.native_settings import capture
+
+            payload = {**spec, "native_settings": capture()}
+        else:
+            payload = {"overrides": runtime_overrides(), **spec}
         command = worker_command(
             module,
-            [json.dumps({"overrides": runtime_overrides(), **spec})],
+            [json.dumps(payload)],
             permit.resources.bytes,
         )
         return supervise_result(
             command,
             memory_budget=permit.resources.bytes,
-            timeout_seconds=float(settings.mesh_worker_timeout_seconds),
+            timeout_seconds=(
+                float(settings.mesh_worker_timeout_seconds)
+                if deadline is None
+                else max(0.001, deadline - time.monotonic())
+            ),
             permit=permit,
             lifecycle=WorkerLifecycle.GUARDED,
             on_chunk=on_chunk,
@@ -789,7 +836,12 @@ def read_spec(argv: list[str]) -> dict[str, Any]:
     """The request a worker was started with, after adopting the parent's overrides."""
     (raw,) = argv
     spec = json.loads(raw)
-    _overlay.update(spec["overrides"])
+    from app.core.native_settings import installed
+
+    if not installed():
+        from app.core.config import _overlay
+
+        _overlay.update(spec["overrides"])
     return spec
 
 
@@ -797,14 +849,17 @@ def generate(
     request: ThumbnailRequest,
     *,
     on_output: OutputSink | None = None,
+    handoff: ThumbnailHandoff | None = None,
 ) -> ThumbnailResult:
     """`ThumbnailEngine.generate` for *request*, run in a supervised child."""
-    decoder = FrameDecoder(request)
+    decoder = FrameDecoder(request, prepared=handoff is not None)
     geometry_output: GeometryOutput | None = None
     thumbnail_output: ThumbnailOutput | None = None
+    prepared_output: PreparedThumbnailOutput | None = None
+    fallback_stats: SupervisionStats | None = None
 
     def receive(chunk: bytes) -> None:
-        nonlocal geometry_output, thumbnail_output
+        nonlocal geometry_output, thumbnail_output, prepared_output
         outputs = iter(decoder.feed(chunk))
         while True:
             try:
@@ -817,6 +872,9 @@ def generate(
                 geometry_output = output
             elif isinstance(output, ThumbnailOutput):
                 thumbnail_output = output
+            elif isinstance(output, PreparedThumbnailOutput):
+                prepared_output = output
+                continue
             else:
                 continue
             if on_output is not None:
@@ -849,6 +907,16 @@ def generate(
         else GeometryWork()
     )
     with ExitStack() as resources:
+        directory: Path | None = None
+        directory_identity: tuple[int, int] | None = None
+        if handoff is not None:
+            directory = resources.enter_context(
+                worker_output_directory(handoff.workspace)
+            )
+            owned = directory.stat()
+            directory_identity = (owned.st_dev, owned.st_ino)
+            spec["prepare_directory"] = str(directory)
+            spec["prepare_deadline"] = handoff.deadline
         if request.include_fingerprint and mesh_policy.canonical_suffix(
             request.path, request.file_type
         ) in (".step", ".stp"):
@@ -869,6 +937,7 @@ def generate(
                 ],
             )
             resources.callback(reservation.release)
+        run_options = {"deadline": handoff.deadline} if handoff is not None else {}
         reply = _run_worker(
             "app.modules.media.mesh_worker",
             spec,
@@ -877,9 +946,94 @@ def generate(
             ),
             work=work,
             on_chunk=receive,
+            **run_options,
         )
         try:
             final = decoder.finish()
+            if prepared_output is not None:
+                assert (
+                    handoff is not None
+                    and directory is not None
+                    and directory_identity is not None
+                )
+                packet = prepared_output.packet
+
+                def recover() -> bytes:
+                    nonlocal fallback_stats
+                    assert (
+                        handoff is not None
+                        and directory is not None
+                        and directory_identity is not None
+                    )
+                    recovered = _render_packet_cpu(
+                        packet, directory, directory_identity, handoff
+                    )
+                    fallback_stats = recovered.stats
+                    return recovered.payload
+
+                image = handoff.complete(
+                    packet,
+                    directory,
+                    directory_identity,
+                    fallback=recover,
+                )
+                peaks = [
+                    value
+                    for value in (
+                        final.peak_rss_bytes,
+                        reply.stats.peak_tree_rss_bytes,
+                        fallback_stats.peak_tree_rss_bytes
+                        if fallback_stats is not None
+                        else None,
+                    )
+                    if value is not None
+                ]
+                peak_rss = max(peaks, default=None)
+                from app.core.logging import get_logger
+
+                get_logger(__name__).info(
+                    "thumbnail_handoff_supervision %s",
+                    json.dumps(
+                        {
+                            "event": "thumbnail_handoff_supervision",
+                            "handoff_id": handoff.identity,
+                            "parser_execution_id": reply.stats.execution_id,
+                            "fallback_execution_id": fallback_stats.execution_id
+                            if fallback_stats is not None
+                            else None,
+                            "peak_supervised_rss_bytes": peak_rss,
+                        }
+                    ),
+                )
+                coverage = replace(
+                    prepared_output.coverage, preview=PreviewCoverage.COMPLETE
+                )
+                thumbnail_output = ThumbnailOutput(
+                    image,
+                    ThumbnailStrategy.FULL,
+                    coverage,
+                    None,
+                    max(
+                        round(
+                            (
+                                time.monotonic()
+                                - handoff.deadline
+                                + settings.mesh_worker_timeout_seconds
+                            )
+                            * 1000
+                        ),
+                        0,
+                    ),
+                    peak_rss,
+                )
+                final = replace(
+                    final,
+                    coverage=replace(final.coverage, preview=PreviewCoverage.COMPLETE),
+                    duration_ms=thumbnail_output.duration_ms,
+                    peak_rss_bytes=peak_rss,
+                )
+                if on_output is not None:
+                    on_output(thumbnail_output)
             if geometry_output is None:
                 from printstash_core.mesh.measurements import (
                     VolumeNotCalculated,
@@ -910,11 +1064,17 @@ def generate(
                 fingerprint_result=final.fingerprint,
                 phase_stats=final.phase_stats,
                 supervision=reply.stats,
+                fallback_supervision=fallback_stats,
             )
+        except TimeoutError as exc:
+            error = MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
+            error.supervision = reply.stats
+            raise error from exc
         except MeshWorkerError as exc:
-            exc.supervision = reply.stats
+            if exc.supervision is None:
+                exc.supervision = reply.stats
             raise
-        except (ValueError, TypeError, AttributeError) as exc:
+        except (ValueError, TypeError, AttributeError, OSError) as exc:
             error = MeshWorkerError(ThumbnailFailureReason.WORKER_FAILED)
             error.supervision = reply.stats
             raise error from exc
@@ -922,3 +1082,46 @@ def generate(
 
         record_phases(result.phase_stats, reply.stats)
         return result
+
+
+def _render_packet_cpu(
+    packet: PacketDescriptor,
+    directory: Path,
+    directory_identity: tuple[int, int],
+    handoff: ThumbnailHandoff,
+) -> SupervisedReply:
+    """Recover one valid GPU refusal under the original deadline, without parsing."""
+    from app.modules.media.native_budget import request as request_resources
+
+    handoff.check(force=True)
+    capacity = native_process.native_capacity()
+    amount = request_resources(
+        capacity,
+        (packet.face_count,),
+        work=RasterWork(handoff.plan.width, handoff.plan.height, 1, RasterCodec.WEBP),
+    )
+    with admission(amount, capacity, checkpoint=handoff.check) as permit:
+        handoff.check(force=True)
+        spec = {
+            "overrides": {**runtime_overrides(), "compute_mode": "cpu"},
+            "directory": str(directory),
+            "directory_identity": directory_identity,
+            "packet": asdict(packet),
+            "width": handoff.plan.width,
+            "height": handoff.plan.height,
+        }
+        reply = supervise_result(
+            worker_command(
+                "app.modules.media.thumbnail_cpu_worker",
+                [json.dumps(spec)],
+                permit.resources.bytes,
+            ),
+            memory_budget=permit.resources.bytes,
+            timeout_seconds=max(0.001, handoff.deadline - time.monotonic()),
+            permit=permit,
+            lifecycle=WorkerLifecycle.GUARDED,
+        )
+        handoff.check(force=True)
+        if not reply.payload:
+            raise MeshWorkerError(ThumbnailFailureReason.RENDERER_NO_OUTPUT)
+        return reply

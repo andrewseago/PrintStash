@@ -1503,26 +1503,53 @@ class TestDeferredRasteriser:
 
 
 class TestEncodeRenderedPixels:
-    def test_preserves_exact_decoded_rgba(self):
+    def test_preserves_exact_png_pixels(self):
         rgba = bytes([10, 20, 30, 255, 255, 0, 0, 0, 194, 207, 220, 18])
-        frame = RenderedPixels(3, 1, rgba)
-
-        encoded = rasterizer.encode_rendered_pixels(frame, output_format="PNG")
-
+        encoded = rasterizer.encode_rendered_pixels(RenderedPixels(3, 1, rgba))
         with Image.open(io.BytesIO(encoded)) as decoded:
-            assert decoded.format == "PNG"
-            assert decoded.size == (3, 1)
             assert decoded.convert("RGBA").tobytes() == rgba
 
     @pytest.mark.parametrize("format", ["PNG", "WEBP"], ids=["png", "webp"])
     def test_preserves_decoded_alpha(self, format):
-        frame = RenderedPixels(3, 1, bytes([10, 20, 30, 255, 255, 0, 0, 0, 194, 207, 220, 18]))
+        rgba = bytes([10, 20, 30, 255, 255, 0, 0, 0, 194, 207, 220, 18])
+        encoded = rasterizer.encode_rendered_pixels(
+            RenderedPixels(3, 1, rgba), output_format=format
+        )
+        with Image.open(io.BytesIO(encoded)) as decoded:
+            assert decoded.convert("RGBA").getchannel("A").tobytes() == rgba[3::4]
 
-        encoded = rasterizer.encode_rendered_pixels(frame, output_format=format)
+    def test_compresses_preview_pixels_with_bounded_visible_error(self):
+        width, height = 320, 240
+        rng = np.random.default_rng(0)
+        # Spatially coherent shading, as in a rendered surface, rather than
+        # independently random pixels that neither codec can compress well.
+        shading = Image.fromarray(rng.integers(40, 220, size=(30, 40), dtype=np.uint8))
+        intensity = np.asarray(
+            shading.resize((width, height), Image.Resampling.BICUBIC)
+        )
+        rgb = np.stack(
+            [intensity * 0.7, intensity * 0.75, intensity * 0.84], axis=-1
+        ).astype(np.uint8)
+        rgba = np.concatenate(
+            [rgb, np.full((height, width, 1), 255, dtype=np.uint8)], axis=-1
+        )
+        source = Image.fromarray(rgba)
+        historical = io.BytesIO()
+        source.save(
+            historical, format="WEBP", lossless=True, exact=True, method=2, quality=80
+        )
+
+        encoded = rasterizer.encode_rendered_pixels(
+            RenderedPixels(width, height, rgba.tobytes()), output_format="WEBP"
+        )
 
         with Image.open(io.BytesIO(encoded)) as decoded:
-            assert decoded.size == (3, 1)
-            assert decoded.getchannel("A").tobytes() == bytes([255, 0, 18])
+            error = np.abs(
+                np.asarray(decoded.convert("RGB")).astype(float) - rgb.astype(float)
+            )
+            assert decoded.size == (width, height)
+            assert float(error.mean()) < 5
+        assert len(encoded) < len(historical.getvalue()) * 0.6
 
     def test_refuses_unknown_encoder_format(self):
         frame = RenderedPixels(1, 1, bytes([10, 20, 30, 255]))
@@ -1613,3 +1640,17 @@ class TestFrozenPreparedRender:
         actual = render_prepared_thumbnail(prepared, case["name"], **options)
         assert actual is not None
         assert hashlib.sha256(actual).hexdigest() == view["png_sha256"]
+
+
+class TestPostprocessRgba:
+    def test_preserves_transparency_in_gpu_readback(self):
+        from printstash_core.mesh.preview_profile import PREVIEW_PROFILE
+        from printstash_core.mesh.rasterizer import postprocess_rgba
+
+        size = 32
+        factor = PREVIEW_PROFILE.supersample_for(size)
+        rgba = bytes([100, 150, 200, 0]) * (size * factor) ** 2
+        result = postprocess_rgba(rgba, size, size)
+        assert (result.width, result.height) == (size, size)
+        assert len(result.rgba) == size * size * 4
+        assert set(result.rgba[3::4]) == {0}

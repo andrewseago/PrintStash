@@ -1370,6 +1370,18 @@ wheels = [
 ]
 
 [[package]]
+name = "onnxruntime-ep-webgpu"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/9f/1e09865bbe4c9202ff1334545535be32dfdbeffc46e7d4c36c5de67ffafe/onnxruntime_ep_webgpu-0.4.0-py3-none-macosx_14_0_universal2.whl", hash = "sha256:8d0a91d44b43d931c3068b9134aed9770f27803e353c2b58c93e1700bb68bcca", size = 5200679, upload-time = "2026-09-22T17:08:33.577Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/ca/00c70322c19913c81a6bb2239aca83781b97a818b55c2ec3d25cec72dc4c/onnxruntime_ep_webgpu-0.4.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:17f660db53b1a509c63e721ac6784a2daa1c4e91a968523ee9986505ee5b0a55", size = 6096222, upload-time = "2026-09-22T17:08:35.569Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/96/2a18a45079250afcd825687aef2895de266d5abc1cff9f52d2dede7598f2/onnxruntime_ep_webgpu-0.4.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:5d8c961eda91a88961cad1fb7621f389f006b18497d6ea9ecf96f729f066cbfb", size = 6892120, upload-time = "2026-09-22T17:08:38.168Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/a4/c98a9e9433b3eeb576977b26c5c1cd0364f15ba9d198bb16101e7563ab06/onnxruntime_ep_webgpu-0.4.0-py3-none-win_amd64.whl", hash = "sha256:7db646669d1a2390551da675115ea125e68cb3d4d2c3a2d6e463372bf8d6ea87", size = 13149847, upload-time = "2026-09-22T17:08:40.238Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/35/e1b1b12e596354d05af43cea09cd9fbd8a24b6df3853c527307b5cfb8d4b/onnxruntime_ep_webgpu-0.4.0-py3-none-win_arm64.whl", hash = "sha256:a9586f6744370776059edd794c11bca2f563258a5bd2707864aefff31d3af39f", size = 14194630, upload-time = "2026-09-22T17:08:42.99Z" },
+]
+
+[[package]]
 name = "opendal"
 version = "0.47.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1614,6 +1626,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "python-multipart" },
+    { name = "scipy" },
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
     { name = "starlette" },
@@ -1666,9 +1679,19 @@ full = [
     { name = "sqlite-vec" },
     { name = "tokenizers" },
 ]
+gpu = [
+    { name = "onnx" },
+    { name = "onnxruntime" },
+    { name = "onnxruntime-ep-webgpu" },
+    { name = "tokenizers" },
+    { name = "wgpu" },
+]
 gpu-pilot = [
     { name = "glcontext" },
     { name = "moderngl" },
+]
+gpu-render = [
+    { name = "wgpu" },
 ]
 step = [
     { name = "cadquery-ocp-novtk" },
@@ -1717,8 +1740,11 @@ requires-dist = [
     { name = "onnx", marker = "extra == 'ai'", specifier = ">=1.22,<2" },
     { name = "onnx", marker = "extra == 'dev'", specifier = ">=1.22,<2" },
     { name = "onnx", marker = "extra == 'full'", specifier = ">=1.22,<2" },
+    { name = "onnx", marker = "extra == 'gpu'", specifier = ">=1.22,<2" },
     { name = "onnxruntime", marker = "extra == 'ai'", specifier = ">=1.30,<2" },
     { name = "onnxruntime", marker = "extra == 'full'", specifier = ">=1.30,<2" },
+    { name = "onnxruntime", marker = "extra == 'gpu'", specifier = ">=1.30,<2" },
+    { name = "onnxruntime-ep-webgpu", marker = "extra == 'gpu'", specifier = ">=0.4,<0.5" },
     { name = "opendal", marker = "extra == 'full'", specifier = "==0.47.9" },
     { name = "opendal", marker = "extra == 'storage-opendal'", specifier = "==0.47.9" },
     { name = "orjson", specifier = ">=3.11,<4" },
@@ -1742,6 +1768,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8,<4" },
     { name = "python-multipart", specifier = ">=0.0.32,<0.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.10" },
+    { name = "scipy", specifier = ">=1.18.1,<2" },
     { name = "sqlalchemy", specifier = ">=2.0.52,<2.1" },
     { name = "sqlite-vec", marker = "extra == 'ai'", specifier = "==0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'full'", specifier = "==0.1.6" },
@@ -1750,15 +1777,18 @@ requires-dist = [
     { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.9,<5" },
     { name = "tokenizers", marker = "extra == 'ai'", specifier = ">=0.23,<0.24" },
     { name = "tokenizers", marker = "extra == 'full'", specifier = ">=0.23,<0.24" },
+    { name = "tokenizers", marker = "extra == 'gpu'", specifier = ">=0.23,<0.24" },
     { name = "trimesh", specifier = ">=5.1.1,<6" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52,<1" },
     { name = "watchfiles", specifier = ">=1.2,<2" },
+    { name = "wgpu", marker = "extra == 'gpu'", specifier = ">=0.32,<0.33" },
+    { name = "wgpu", marker = "extra == 'gpu-render'", specifier = ">=0.32,<0.33" },
     { name = "wgpu", marker = "extra == 'webgpu-pilot'", specifier = "==0.32.0" },
     { name = "wsgidav", marker = "extra == 'dev'", specifier = ">=4.3,<5" },
     { name = "wsproto", marker = "extra == 'dev'", specifier = ">=1.3,<2" },
 ]
-provides-extras = ["async-db", "step", "full", "storage-opendal", "dev", "ai", "webgpu-pilot", "gpu-pilot"]
+provides-extras = ["async-db", "step", "full", "storage-opendal", "dev", "ai", "gpu-render", "gpu", "webgpu-pilot", "gpu-pilot"]
 
 [[package]]
 name = "printstash-core"

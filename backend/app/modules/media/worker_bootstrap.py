@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 RESOURCE_EXIT = 72
 WORKER_MARKER = "PRINTSTASH_ISOLATED_MESH_WORKER"
+PRIORITY_ENV = "PRINTSTASH_WORKER_PRIORITY"
 
 
 class WorkerLifecycle(Enum):
@@ -39,9 +40,14 @@ class LaunchResources:
 def launch_resources(permit: NativePermit) -> LaunchResources:
     """Native children retain source bytes as well as their compute allowance."""
     from app.runtime.native_runtime import PERMIT_ENV, PERMIT_PATH_ENV
+    from app.runtime.preparation_runtime import (
+        HOST_PATH_ENV,
+        HOST_PERMIT_ENV,
+        current_host_permit,
+        current_permit,
+    )
     from app.runtime.preparation_runtime import PERMIT_ENV as PREPARATION_ENV
     from app.runtime.preparation_runtime import PERMIT_PATH_ENV as PREPARATION_PATH_ENV
-    from app.runtime.preparation_runtime import current_permit
 
     descriptors = [permit.fileno]
     environment = {PERMIT_ENV: str(permit.fileno), PERMIT_PATH_ENV: str(permit.path)}
@@ -50,6 +56,11 @@ def launch_resources(permit: NativePermit) -> LaunchResources:
         descriptors.append(prepared.fileno)
         environment[PREPARATION_ENV] = str(prepared.fileno)
         environment[PREPARATION_PATH_ENV] = str(prepared.path)
+    host = current_host_permit()
+    if host is not None:
+        descriptors.append(host.fileno)
+        environment[HOST_PERMIT_ENV] = str(host.fileno)
+        environment[HOST_PATH_ENV] = str(host.path)
     return LaunchResources(tuple(descriptors), environment)
 
 
@@ -106,7 +117,7 @@ def reap_descendants(group: int) -> None:
                 fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
                 if int(fields[1]) == os.getpid() and int(fields[2]) == group:
                     adopted.append(int(entry.name))
-            except (OSError, ValueError, IndexError):
+            except OSError, ValueError, IndexError:
                 continue
         if not adopted:
             return
@@ -167,7 +178,7 @@ def _drain_group(root: int, *, include_root: bool) -> None:
                 if _pidfd_exited(fd):
                     os.close(fd)
                     del watched[pid]
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 uncertain = True
         try:
             for entry in Path("/proc").iterdir():
@@ -198,12 +209,12 @@ def _drain_group(root: int, *, include_root: bool) -> None:
                     uncertain = True
                 except ProcessLookupError:
                     pass
-                except (OSError, ValueError, IndexError):
+                except OSError, ValueError, IndexError:
                     uncertain = True
                 finally:
                     if fd is not None:
                         os.close(fd)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             uncertain = True
         for fd in watched.values():
             try:
@@ -310,7 +321,22 @@ def _run(argv: list[str]) -> int:
     os.environ[WORKER_MARKER] = str(os.getpid())
     sys.argv = [module, *arguments]
     try:
-        runpy.run_module(module, run_name="__main__")
+        if module == "app.modules.media.mesh_worker":
+            import json
+
+            (raw_spec,) = arguments
+            native_settings = json.loads(raw_spec).get("native_settings")
+            if native_settings is not None:
+                from app.core.native_settings import install
+
+                install(native_settings)
+        from app.core.work_priority import WorkPriority, priority_scope
+
+        # ContextVars do not cross exec. Bind the supervisor's scheduling tier
+        # before application code can perform nested admission or GPU dispatch.
+        priority = WorkPriority(os.environ.get(PRIORITY_ENV, WorkPriority.INTERACTIVE))
+        with priority_scope(priority):
+            runpy.run_module(module, run_name="__main__")
     except MemoryError:
         os._exit(RESOURCE_EXIT)
     except ImportError as exc:
@@ -360,6 +386,13 @@ def main(argv: list[str]) -> int:
                 NativePermit.inherit(
                     int(prepared), Path(os.environ[PREPARATION_PATH_ENV])
                 )
+            )
+        from app.runtime.preparation_runtime import HOST_PATH_ENV, HOST_PERMIT_ENV
+
+        host = os.environ.get(HOST_PERMIT_ENV)
+        if host is not None:
+            credits.enter_context(
+                NativePermit.inherit(int(host), Path(os.environ[HOST_PATH_ENV]))
             )
         return _run(argv)
 

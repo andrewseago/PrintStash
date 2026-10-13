@@ -11,6 +11,8 @@ unmeasurable input into an optimistic allocation.
 from __future__ import annotations
 
 import math
+import os
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -39,6 +41,16 @@ DEFAULT_FACE_BYTES = 3000
 # This whole-pipeline coefficient includes the existing startup envelope.
 WEBP_FACE_BYTES = 4000
 THREE_MF_FACE_BYTES = 3600
+# Optional text preflight must stay cheap in the supervisor. OBJ gets a
+# separate CPU allowance and wall watchdog: runnable-thread contention must not
+# turn a countable source into a whole-pool claim. Check at bounded 128-line
+# intervals (at most 512 KiB); parsing still happens in a guarded child. Exhausting any
+# bound keeps the original unknown-complexity claim; it never rejects a source.
+TEXT_PREFLIGHT_BYTES = 8 * 1024**2
+TEXT_PREFLIGHT_LINE_BYTES = 4096
+TEXT_PREFLIGHT_SECONDS = 0.1
+OBJ_PREFLIGHT_WALL_SECONDS = 1.0
+TEXT_PREFLIGHT_CPU_SECONDS = 0.25
 
 
 class RasterCodec(str, Enum):
@@ -172,20 +184,199 @@ def face_capacity(memory: int, suffix: str) -> int:
     return memory // cost
 
 
+def _obj_triangle_count(path: Path, *, deadline: float) -> int | None:
+    """Bound plain OBJ storage without parsing every coordinate twice.
+
+    Admission counts records and polygon corners; the isolated source reader
+    owns numeric and index validation. Each coordinate channel must fit the
+    three-corners-per-triangle envelope. Materials, continuation syntax, and
+    unknown directives keep the full-pool claim because they can add storage
+    that these counts do not cover.
+    """
+    from app.modules.media.stl_reader import STLSourceSnapshot
+
+    with path.open("rb") as stream:
+        before = STLSourceSnapshot.from_stat(os.fstat(stream.fileno()))
+        if before.size > TEXT_PREFLIGHT_BYTES:
+            return None
+        cpu_deadline = time.thread_time() + TEXT_PREFLIGHT_CPU_SECONDS
+        coordinate_counts = [0, 0, 0]
+        triangles = scanned = lines = 0
+        while True:
+            if lines % 128 == 0 and (
+                time.monotonic() >= deadline or time.thread_time() >= cpu_deadline
+            ):
+                return None
+            lines += 1
+            raw = stream.readline(TEXT_PREFLIGHT_LINE_BYTES + 1)
+            if not raw:
+                break
+            scanned += len(raw)
+            if (
+                len(raw) > TEXT_PREFLIGHT_LINE_BYTES
+                or scanned > TEXT_PREFLIGHT_BYTES
+                or not raw.isascii()
+                or b"\\" in raw
+                or b"\x00" in raw
+                or b"mtllib" in raw
+            ):
+                return None
+            fields = raw.split()
+            if not fields or fields[0].startswith(b"#"):
+                continue
+            kind = fields[0]
+            if kind in (b"v", b"vt", b"vn"):
+                channel = {b"v": 0, b"vt": 1, b"vn": 2}[kind]
+                if len(fields) not in ((3, 4) if channel == 1 else (4,)):
+                    return None
+                coordinate_counts[channel] += 1
+            elif kind == b"f":
+                if len(fields) < 4:
+                    return None
+                triangles += len(fields) - 3
+            elif kind not in (b"o", b"g", b"s", b"l", b"p"):
+                return None
+        if (
+            time.monotonic() >= deadline
+            or time.thread_time() >= cpu_deadline
+            or triangles == 0
+            or any(count > 3 * triangles for count in coordinate_counts)
+            or scanned != before.size
+            or before != STLSourceSnapshot.from_stat(os.fstat(stream.fileno()))
+            or before != STLSourceSnapshot.from_stat(path.stat())
+        ):
+            return None
+        return triangles
+
+
+def _ascii_triangle_bound(path: Path) -> int | None:
+    """Bound accepted ASCII facets by physical lines, without decoding geometry.
+
+    The canonical reader requires seven separate physical lines per facet:
+    facet normal, outer loop, three vertices, endloop, endfacet. Blank lines,
+    comments and solid delimiters can only increase this bound. This does not
+    certify syntax: the guarded canonical reader still validates every token.
+    Binary sources are recognized before this path; non-ASCII input stays
+    unknown. Memory weights and the worker's hard ceilings remain unchanged.
+    """
+    from app.modules.media.stl_reader import (
+        InvalidSTL,
+        STLReadLimits,
+        STLSourceSnapshot,
+        _iter_ascii_facets,
+    )
+
+    deadline = time.monotonic() + OBJ_PREFLIGHT_WALL_SECONDS
+    cpu_deadline = time.thread_time() + TEXT_PREFLIGHT_CPU_SECONDS
+    with path.open("rb") as stream:
+        before = STLSourceSnapshot.from_stat(os.fstat(stream.fileno()))
+        if before.size > 1 << 30:
+            return None
+        # The legacy load guard interprets non-solid prefixes as binary-like.
+        # Keep their full admission rather than giving that separate guard a
+        # smaller ceiling which could turn invalid syntax into a resource error.
+        if not stream.read(6).lower().startswith(b"solid"):
+            return None
+        stream.seek(0)
+        try:
+            next(
+                _iter_ascii_facets(
+                    stream,
+                    STLReadLimits(
+                        max_source_bytes=TEXT_PREFLIGHT_BYTES,
+                        max_line_bytes=TEXT_PREFLIGHT_LINE_BYTES,
+                        deadline=deadline,
+                    ),
+                )
+            )
+        except InvalidSTL, StopIteration:
+            return None
+        stream.seek(0)
+        lines = consumed = 0
+        terminated = True
+        while block := stream.read(512 * 1024):
+            consumed += len(block)
+            if (
+                consumed > before.size
+                or not block.isascii()
+                or b"\x00" in block
+                or time.monotonic() >= deadline
+                or time.thread_time() >= cpu_deadline
+            ):
+                return None
+            lines += block.count(b"\n")
+            terminated = block.endswith(b"\n")
+        count = (lines + int(not terminated)) // 7
+        if (
+            count == 0
+            or consumed != before.size
+            or before != STLSourceSnapshot.from_stat(os.fstat(stream.fileno()))
+            or before != STLSourceSnapshot.from_stat(path.stat())
+        ):
+            return None
+        return count
+
+
+def _source_triangle_count(source: MeshSource, *, minimum_faces: int = 0) -> int | None:
+    """Conservative source counts for admission, never geometry certification."""
+    from app.modules.media.stl_reader import binary_stl_info
+
+    suffix = source.file_type.lower().lstrip(".")
+    try:
+        if suffix == "stl":
+            from app.modules.media.stl_reader import STLSourceSnapshot
+
+            with source.path.open("rb") as stream:
+                before = STLSourceSnapshot.from_stat(os.fstat(stream.fileno()))
+                info = binary_stl_info(source.path)
+                byte_bound = before.size // 50
+                # If even the densest source fits the startup floor, a full
+                # text scan cannot reduce admission. The guarded loader still
+                # owns syntax; the snapshot checks below still own identity.
+                bound = (
+                    info[0]
+                    if info is not None
+                    else byte_bound
+                    if byte_bound <= minimum_faces
+                    else _ascii_triangle_bound(source.path)
+                )
+                if bound is None:
+                    # A binary facet occupies 50 bytes; even a minimally
+                    # encoded ASCII facet needs more. Including header and
+                    # trailing bytes keeps this an upper bound for both.
+                    # It also dominates the loader's legacy binary-density
+                    # guard, preserving malformed-input classification.
+                    bound = before.size // 50
+                if before != STLSourceSnapshot.from_stat(
+                    os.fstat(stream.fileno())
+                ) or before != STLSourceSnapshot.from_stat(source.path.stat()):
+                    return None
+                return bound
+        if suffix == "obj":
+            return _obj_triangle_count(
+                source.path, deadline=time.monotonic() + OBJ_PREFLIGHT_WALL_SECONDS
+            )
+    except OSError, ValueError:
+        # Unknown, changing or expensive text retains full isolation.
+        return None
+    return None
+
+
 def estimate_sources(
     pool: Resources,
     sources: tuple[MeshSource, ...],
     *,
     work: WorkProfile = GeometryWork(),
 ) -> Resources:
-    from app.modules.media.stl_reader import binary_stl_info
-
-    counts: list[int | None] = []
-    for source in sources:
-        info = (
-            binary_stl_info(source.path)
-            if source.file_type.lower().lstrip(".") == "stl"
-            else None
-        )
-        counts.append(info[0] if info is not None else None)
-    return request(pool, tuple(counts), work=work)
+    minimum, _incremental, face_bytes = _work_memory(work)
+    # The floor applies to the combined request, not separately to each source.
+    # Multi-source work needs actual bounds to retain its aggregate allowance.
+    minimum_faces = minimum // face_bytes if len(sources) == 1 else 0
+    return request(
+        pool,
+        tuple(
+            _source_triangle_count(source, minimum_faces=minimum_faces)
+            for source in sources
+        ),
+        work=work,
+    )

@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Optional, cast
 
 from printstash_core.mesh.similarity.budgets import MAX_ANALYSIS_FACES
 
-from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.native_settings import settings
 from app.modules.media import mesh_policy
 
 if TYPE_CHECKING:
@@ -206,11 +206,20 @@ def _load_stl_mesh(path: Path) -> Trimesh:
     except OSError as exc:
         raise GeometryError(FingerprintFailureCode.SOURCE_UNAVAILABLE.value) from exc
     count, facets = loaded.measurements.triangle_count, loaded.triangles
-    return trimesh.Trimesh(
+    mesh = trimesh.Trimesh(
         vertices=facets.reshape(-1, 3),
         faces=np.arange(count * 3, dtype=np.int64).reshape(-1, 3),
         process=False,
     )
+    # Every STL vertex belongs to a facet. The canonical reader already proved
+    # these exact bounds; trimesh's generic bounds path would gather another
+    # full vertex array before reducing it again. Install only after source
+    # arrays exist so its tracked-array cache still invalidates on mutation.
+    mesh._cache["bounds"] = np.asarray(
+        [loaded.measurements.bounds_min, loaded.measurements.bounds_max],
+        dtype=np.float64,
+    )
+    return mesh
 
 
 def load_mesh(path: Path, *, file_type: str | None = None) -> Trimesh | None:
@@ -254,6 +263,24 @@ def load_mesh(path: Path, *, file_type: str | None = None) -> Trimesh | None:
         # instances. Looking only at ``loaded.geometry.values()`` would return
         # the source mesh once at its untransformed coordinates.
         try:
+            # The freshly loaded scene belongs only to this call. A single,
+            # identity-placed mesh can transfer ownership directly: dump()
+            # otherwise copies its arrays and visual data before applying a
+            # transform that changes nothing. Repeated placements and every
+            # non-identity transform still use the canonical scene flattener.
+            nodes = loaded.graph.nodes_geometry
+            if len(nodes) == 1:
+                import numpy as np
+
+                node = nodes[0]
+                transform, geometry_name = loaded.graph[node]
+                geometry = loaded.geometry[geometry_name]
+                if isinstance(geometry, trimesh.Trimesh) and np.array_equal(
+                    transform, np.eye(4)
+                ):
+                    geometry.metadata["name"] = geometry_name
+                    geometry.metadata["node"] = node
+                    return geometry
             meshes = [
                 geometry
                 for geometry in loaded.dump()

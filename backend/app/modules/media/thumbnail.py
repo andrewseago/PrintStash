@@ -10,8 +10,8 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.native_settings import settings
 from app.modules.media import bgcode
 
 logger = get_logger(__name__)
@@ -30,19 +30,26 @@ def to_webp(
     *,
     normalize: bool = True,
     width: int | None = None,
+    preserve_frame: bool = False,
     renderer_encoded: bool = False,
 ) -> bytes:
-    """Validate and frame a thumbnail using the shared compact WebP policy.
+    """Normalize preview bytes using the shared lossy WebP policy.
 
-    Color uses quality 90; alpha stays lossless. Only bytes produced by the
-    current native renderer may bypass a second lossy encode, and only after
-    decoding, size and framing validation. Embedded images and uploads always
-    pass through the encoder, including older canonical lossless WebPs.
-    ``renderer_encoded`` is internal provenance, never inferred from a file's
-    format or metadata.
+    Visible RGB may change within the compression recipe. Alpha stays lossless,
+    including antialiased edges; invisible RGB does not need to be preserved.
+
+    ``preserve_frame`` accepts only a complete renderer's canonical-sized,
+    nonempty alpha frame with a transparent border; it never repositions pixels.
+    An already encoded WebP is retained after the same decode validation.
+    For normal framing, only internal ``renderer_encoded`` provenance allows
+    bypassing recompression; embedded images and uploads always encode.
+
+    Raises a stable error when validation or encoding fails. Callers treat the
+    thumbnail as a retryable derivative; hostile input is never stored raw.
     """
     try:
         from PIL import Image
+        from printstash_core.mesh.preview_profile import PREVIEW_PROFILE
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -61,9 +68,21 @@ def to_webp(
                 if alpha_bounds is None:
                     raise ThumbnailValidationError("thumbnail_empty")
 
-                if normalize:
-                    from printstash_core.mesh.preview_profile import PREVIEW_PROFILE
-
+                if preserve_frame:
+                    # Only the complete renderer owns this frame. Embedded
+                    # previews still take the normalization path below.
+                    if (
+                        not source_had_alpha
+                        or rgba.size != (width, height)
+                        or alpha_bounds[0] <= 0
+                        or alpha_bounds[1] <= 0
+                        or alpha_bounds[2] >= width
+                        or alpha_bounds[3] >= height
+                    ):
+                        raise ThumbnailValidationError("thumbnail_frame_invalid")
+                    if source_is_webp:
+                        return data
+                elif normalize:
                     canonical_with_safe_border = (
                         source_had_alpha
                         and rgba.size == (width, height)

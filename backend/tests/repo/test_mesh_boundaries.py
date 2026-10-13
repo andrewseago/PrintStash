@@ -27,9 +27,13 @@ OWNERS = {
     "modules/media/geometry_analysis.py",
     "modules/media/fingerprints.py",
     "modules/media/mesh_render.py",
+    # Broker renderer consumes only bounded validated array frames, never files.
+    "modules/media/webgpu_render.py",
     "modules/media/step_geometry.py",
     "modules/media/stl_fallback.py",
     "modules/media/mesh_worker.py",
+    # Guarded CPU fallback accepts only an owned, validated geometry packet.
+    "modules/media/thumbnail_cpu_worker.py",
     "modules/media/step_worker.py",
     "modules/media/stl_worker.py",
     "modules/media/visual_worker.py",

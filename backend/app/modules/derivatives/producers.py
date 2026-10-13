@@ -40,7 +40,12 @@ from app.db.models import (
 from app.db.scopes import live
 from app.db.session import get_session_factory
 from app.modules.library.volume_metadata import apply_volume
-from app.modules.media import gcode_parser, mesh_isolation, stl_isolation, thumbnail
+from app.modules.media import (
+    gcode_parser,
+    mesh_isolation,
+    stl_isolation,
+    thumbnail,
+)
 from app.modules.media.mesh_contracts import (
     GeometryReady,
     MeshMeasurements,
@@ -203,12 +208,16 @@ def _publish_thumbnail(
     duration_ms: int | None = None,
     peak_rss_bytes: int | None = None,
     abort_on_failure: bool = False,
+    preserve_frame: bool = False,
     renderer_encoded: bool = False,
 ) -> DerivativeState:
     assert file_row.id is not None
     try:
         encoded = thumbnail.to_webp(
-            image, normalize=normalize, renderer_encoded=renderer_encoded
+            image,
+            normalize=normalize,
+            preserve_frame=preserve_frame,
+            renderer_encoded=renderer_encoded,
         )
     except ValueError:
         _fail(
@@ -382,6 +391,7 @@ def _derive_mesh(file_id: int, *, execution: JobExecution | None = None) -> Outc
                     frame.image,
                     attempt=attempts[kind],
                     normalize=True,
+                    preserve_frame=frame.strategy is ThumbnailStrategy.FULL,
                     strategy=frame.strategy.value,
                     renderer_encoded=frame.strategy is ThumbnailStrategy.FULL,
                     complete=frame.coverage.preview
@@ -397,13 +407,26 @@ def _derive_mesh(file_id: int, *, execution: JobExecution | None = None) -> Outc
 
     try:
         with ExitStack() as stack:
-            prepared = stack.enter_context(reserve_sources((resolve(file_row),)))
+            from app.modules.media import thumbnail_handoff
+            from app.modules.media.thumbnail_packet import MAX_PACKET_BYTES
+
+            width = int(settings.model_thumbnail_width)
+            handoff_plan = (
+                thumbnail_handoff.plan(width, round(width * 3 / 4), file_row.size_bytes)
+                if DerivativeKind.THUMBNAIL in attempts
+                and plan is None
+                else None
+            )
+            output_bytes = MAX_PACKET_BYTES if handoff_plan is not None else 0
+            prepared = stack.enter_context(
+                reserve_sources((resolve(file_row),), output_bytes=output_bytes)
+            )
             claim = CapacityManager(get_session_factory()).reserve(
                 f"derive:mesh:{file_id}:{time.monotonic_ns()}",
                 [
                     CapacityResource.for_path(
                         prepared.directory,
-                        file_row.size_bytes * 2,
+                        file_row.size_bytes * 2 + output_bytes,
                         role="mesh source preparation",
                     ),
                     CapacityResource.for_path(
@@ -415,47 +438,72 @@ def _derive_mesh(file_id: int, *, execution: JobExecution | None = None) -> Outc
             )
             stack.callback(claim.release)
             (source,) = stack.enter_context(prepared.materialize(capacity_claimed=True))
-            result = mesh_isolation.generate(
-                ThumbnailRequest(
-                    path=source,
-                    file_type=file_row.file_type.value,
-                    include_geometry=DerivativeKind.METADATA in attempts,
-                    include_thumbnail=DerivativeKind.THUMBNAIL in attempts,
-                    reason="derivative",
-                    output_format="WEBP",
-                    include_fingerprint=plan is not None
-                    and (DerivativeKind.METADATA in attempts or pending is not None),
-                    triangle_cap=plan.triangle_cap
-                    if plan is not None
-                    else MAX_ANALYSIS_FACES,
-                ),
-                on_output=publish,
+            request = ThumbnailRequest(
+                path=source,
+                file_type=file_row.file_type.value,
+                include_geometry=DerivativeKind.METADATA in attempts,
+                include_thumbnail=DerivativeKind.THUMBNAIL in attempts,
+                reason="derivative",
+                output_format="WEBP",
+                include_fingerprint=plan is not None
+                and (DerivativeKind.METADATA in attempts or pending is not None),
+                triangle_cap=plan.triangle_cap
+                if plan is not None
+                else MAX_ANALYSIS_FACES,
             )
-            if result.fingerprint_result is not None:
-                if pending is None:
-                    raise RuntimeError("fingerprint_completion_without_pending_input")
-                try:
-                    with get_session_factory().scoped_session() as session:
-                        mesh_continuations.complete(
-                            session, pending, result.fingerprint_result
-                        )
-                        session.commit()
-                except records.AttemptSuperseded:
-                    raise
-                except Exception:  # noqa: BLE001 - basics are already durable
-                    logger.exception(
-                        "fingerprint publication failed", extra={"file_id": file_id}
+            result = None
+            try:
+                # Decode once under one native admission. Independent output
+                # consumers share source arrays; the GPU handoff starts after
+                # clean worker exit releases its native memory reservation.
+                if handoff_plan is not None:
+                    handoff = stack.enter_context(
+                        thumbnail_handoff.reserve(handoff_plan, prepared.directory)
                     )
-                    with get_session_factory().scoped_session() as session:
-                        mesh_continuations.defer(
-                            session, pending, FingerprintFailureCode.WORKER_FAILED
+                    result = mesh_isolation.generate(
+                        request, on_output=publish, handoff=handoff
+                    )
+                else:
+                    result = mesh_isolation.generate(request, on_output=publish)
+                if result is not None and result.fingerprint_result is not None:
+                    if pending is None:
+                        raise RuntimeError(
+                            "fingerprint_completion_without_pending_input"
                         )
-                        session.commit()
+                    try:
+                        with get_session_factory().scoped_session() as session:
+                            mesh_continuations.complete(
+                                session, pending, result.fingerprint_result
+                            )
+                            session.commit()
+                    except records.AttemptSuperseded:
+                        raise
+                    except Exception:  # noqa: BLE001 - basics are already durable
+                        logger.exception(
+                            "fingerprint publication failed", extra={"file_id": file_id}
+                        )
+                        with get_session_factory().scoped_session() as session:
+                            mesh_continuations.defer(
+                                session, pending, FingerprintFailureCode.WORKER_FAILED
+                            )
+                            session.commit()
+            finally:
+                # Clear active-frame ownership before the host reservation exits,
+                # including publication and continuation failures.
+                del result
+
     except records.AttemptSuperseded:
         return Outcome(outcome)
-    except (ArtifactContentError, MeshWorkerError, AdmissionTooLarge) as exc:
+    except (
+        ArtifactContentError,
+        MeshWorkerError,
+        AdmissionTooLarge,
+        TimeoutError,
+    ) as exc:
         reason = (
-            ThumbnailFailureReason.RESOURCE_LIMIT.value
+            ThumbnailFailureReason.TIMEOUT.value
+            if isinstance(exc, TimeoutError)
+            else ThumbnailFailureReason.RESOURCE_LIMIT.value
             if isinstance(exc, AdmissionTooLarge)
             else exc.reason.value
             if isinstance(exc, MeshWorkerError)

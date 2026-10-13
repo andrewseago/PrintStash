@@ -328,3 +328,204 @@ class TestPreparationLifecycle:
                 raise ValueError("consumer failure")
 
         assert preparation_runtime.current_permit() is None
+
+
+class TestThumbnailHostCustody:
+    def test_requires_prepared_source_ownership(self, preparation_pools):
+        amount = Resources(1, 100)
+        with pytest.raises(RuntimeError, match="prepared source custody"):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                pytest.fail("host memory admitted without source custody")
+
+    def test_refuses_reversed_native_order(self, preparation_pools, tmp_path):
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with LocalResourcePool(tmp_path / "native").reserve(
+                amount, amount, checkpoint=lambda: None
+            ) as native:
+                with native_runtime.inherit(native.fileno, native.path):
+                    with pytest.raises(RuntimeError, match="prepared source custody"):
+                        with preparation_runtime.reserve_host(
+                            amount, amount, checkpoint=lambda: None
+                        ):
+                            pytest.fail("native-held host memory admitted")
+
+    def test_transports_all_custody_descriptors(self, preparation_pools, tmp_path):
+        from app.modules.media.worker_bootstrap import launch_resources
+
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(
+            amount, amount, checkpoint=lambda: None
+        ) as source:
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ) as host:
+                with LocalResourcePool(tmp_path / "native").reserve(
+                    amount, amount, checkpoint=lambda: None
+                ) as native:
+                    launch = launch_resources(native)
+                    assert set(launch.descriptors) == {
+                        native.fileno,
+                        source.fileno,
+                        host.fileno,
+                    }
+                    assert (
+                        int(launch.environment[preparation_runtime.HOST_PERMIT_ENV])
+                        == host.fileno
+                    )
+                    assert launch.environment[preparation_runtime.HOST_PATH_ENV] == str(
+                        host.path
+                    )
+        assert preparation_runtime.current_host_permit() is None
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                pass
+
+    def test_keeps_credit_until_inherited_descriptor_closes(self, preparation_pools):
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ) as host:
+                descriptor = os.dup(host.fileno)
+            calls = 0
+            with pytest.raises(RuntimeError, match="still held"):
+
+                def stop():
+                    nonlocal calls
+                    calls += 1
+                    if calls >= 4:
+                        raise RuntimeError("still held")
+
+                with preparation_pools.host.reserve(amount, amount, checkpoint=stop):
+                    pytest.fail("inherited credit released early")
+            os.close(descriptor)
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                pass
+
+
+class TestCodecCustody:
+    def test_bounds_simultaneous_codecs(self, preparation_pools):
+        amount, capacity = Resources(1, 100), Resources(2, 200)
+        polled = threading.Event()
+
+        def contender():
+            checks = 0
+
+            def check():
+                nonlocal checks
+                checks += 1
+                if checks >= 3:
+                    polled.set()
+
+            with preparation_runtime.reserve(amount, capacity, checkpoint=lambda: None):
+                with preparation_runtime.reserve_host(
+                    amount, capacity, checkpoint=lambda: None
+                ):
+                    with preparation_runtime.reserve_codec(checkpoint=check):
+                        return "encoded"
+
+        with ThreadPoolExecutor(1) as executor:
+            with preparation_runtime.reserve(amount, capacity, checkpoint=lambda: None):
+                with preparation_runtime.reserve_host(
+                    amount, capacity, checkpoint=lambda: None
+                ):
+                    with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                        future = executor.submit(contender)
+                        assert polled.wait(5)
+                        assert not future.done()
+            assert future.result(timeout=5) == "encoded"
+
+    def test_requires_host_custody(self, preparation_pools):
+        with pytest.raises(RuntimeError, match="codec requires host custody"):
+            with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                pytest.fail("unreserved codec admitted")
+        assert not preparation_pools.codec.directory.exists()
+
+    def test_refuses_native_credit_during_codec_admission(
+        self, preparation_pools, tmp_path
+    ):
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                with LocalResourcePool(tmp_path / "native").reserve(
+                    amount, amount, checkpoint=lambda: None
+                ) as native:
+                    with native_runtime.inherit(native.fileno, native.path):
+                        with pytest.raises(RuntimeError, match="after parser release"):
+                            with preparation_runtime.reserve_codec(
+                                checkpoint=lambda: None
+                            ):
+                                pytest.fail("parser-held codec admitted")
+        assert not preparation_pools.codec.directory.exists()
+
+    def test_refuses_nested_codec_admission(self, preparation_pools):
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                    with pytest.raises(RuntimeError, match="cannot be nested"):
+                        with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                            pytest.fail("nested codec admitted")
+
+    def test_releases_codec_credit_after_withdrawal(self, preparation_pools):
+        from app.core.cancellation import OperationCancelled
+
+        amount = Resources(1, 100)
+        with preparation_runtime.reserve(amount, amount, checkpoint=lambda: None):
+            with preparation_runtime.reserve_host(
+                amount, amount, checkpoint=lambda: None
+            ):
+                with pytest.raises(OperationCancelled):
+                    with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                        raise OperationCancelled()
+                with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                    assert preparation_runtime.current_host_permit() is not None
+
+    def test_withdraws_a_waiting_codec(self, preparation_pools):
+        from app.core.cancellation import OperationCancelled
+
+        amount, capacity = Resources(1, 100), Resources(2, 200)
+        polled, cancelled = threading.Event(), threading.Event()
+
+        def contender():
+            checks = 0
+
+            def check():
+                nonlocal checks
+                checks += 1
+                if checks >= 3:
+                    polled.set()
+                if cancelled.is_set():
+                    raise OperationCancelled()
+
+            with preparation_runtime.reserve(amount, capacity, checkpoint=lambda: None):
+                with preparation_runtime.reserve_host(
+                    amount, capacity, checkpoint=lambda: None
+                ):
+                    with preparation_runtime.reserve_codec(checkpoint=check):
+                        pytest.fail("cancelled waiter entered codec")
+
+        with ThreadPoolExecutor(1) as executor:
+            with preparation_runtime.reserve(amount, capacity, checkpoint=lambda: None):
+                with preparation_runtime.reserve_host(
+                    amount, capacity, checkpoint=lambda: None
+                ):
+                    with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                        future = executor.submit(contender)
+                        assert polled.wait(5)
+                        cancelled.set()
+                        with pytest.raises(OperationCancelled):
+                            future.result(timeout=5)
+                    with preparation_runtime.reserve_codec(checkpoint=lambda: None):
+                        assert preparation_runtime.current_host_permit() is not None

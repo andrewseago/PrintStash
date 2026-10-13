@@ -222,7 +222,6 @@ class TestDeriveMesh:
         monkeypatch,
     ):
         from app.modules.media.fingerprints import ALGORITHM_VERSION
-        from app.modules.media.thumbnail_engine import ThumbnailEngine
 
         original = three_mf(extras={"Metadata/thumbnail.png": content.png()})
         with zipfile.ZipFile(io.BytesIO(original)) as archive:
@@ -248,6 +247,8 @@ class TestDeriveMesh:
             )
         )
         monkeypatch.setattr(extensions, "_derivatives", similarity_ingestion)
+        from app.modules.media.thumbnail_engine import ThumbnailEngine
+
         monkeypatch.setattr(mesh_isolation, "generate", ThumbnailEngine().generate)
 
         outcome = producers.derive_mesh(artifact.id)
@@ -891,8 +892,8 @@ class TestDeriveMesh:
         self, db_session: Session, stored, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The #259 shape through the whole pipeline: stored, derived, recorded."""
-        monkeypatch.setenv("VAULT_MESH_MAX_RENDER_TRIANGLES", "1000")
-        monkeypatch.setenv("VAULT_MESH_MEMORY_BUDGET_FRACTION", "0")
+        monkeypatch.setitem(_overlay, "mesh_max_render_triangles", 1000)
+        monkeypatch.setitem(_overlay, "mesh_memory_budget_fraction", 0.0)
         placements = tuple((1, f"1 0 0 0 1 0 0 0 1 {i * 5} 0 0") for i in range(400))
         artifact = stored("plate.3mf", three_mf(build=placements))
 
@@ -2166,7 +2167,10 @@ def staged_mesh_outputs():
         peak_rss_bytes=None,
     )
     thumbnail = ThumbnailOutput(
-        image=content.png(),
+        image=content.rendered_thumbnail(
+            width=settings.model_thumbnail_width,
+            height=round(settings.model_thumbnail_width * 3 / 4),
+        ),
         strategy=ThumbnailStrategy.FULL,
         coverage=MeshCoverage(
             SourceScanState.COMPLETE, GeometryNotLoaded(), PreviewCoverage.COMPLETE
@@ -2179,6 +2183,188 @@ def staged_mesh_outputs():
 
 
 class TestStagedMeshPublication:
+    @pytest.mark.parametrize("file_type", ["stl", "obj", "3mf"])
+    def test_retains_one_worker_per_source(
+        self, db_session, stored, monkeypatch, file_type
+    ):
+        import trimesh
+
+        from app.modules.media import native_process, thumbnail_handoff
+        from app.runtime.compute import client
+        from app.runtime.native_admission import Resources
+
+        monkeypatch.setattr(thumbnail_handoff, "plan", lambda *args: None)
+        payload = trimesh.creation.box().export(file_type=file_type)
+        if isinstance(payload, str):
+            payload = payload.encode()
+        artifact = stored(f"mesh.{file_type}", payload)
+        monkeypatch.setattr(client, "available", lambda **kwargs: True)
+        monkeypatch.setattr(client, "warm_render", lambda: None)
+        monkeypatch.setattr(
+            native_process, "native_capacity", lambda: Resources(4, 2 * 1024**3)
+        )
+
+        executions = []
+        supervise = mesh_isolation.supervise_result
+
+        def observe(command, **kwargs):
+            executions.append(command)
+            return supervise(command, **kwargs)
+
+        monkeypatch.setattr(mesh_isolation, "supervise_result", observe)
+
+        outcome = producers.derive_mesh(artifact.id)
+
+        assert len(executions) == 1
+        assert "app.modules.media.mesh_worker" in executions[0]
+        assert outcome.kinds == {
+            DerivativeKind.METADATA: DerivativeState.READY,
+            DerivativeKind.THUMBNAIL: DerivativeState.READY,
+        }
+        db_session.expire_all()
+        assert get_backend().exists(
+            _rows(db_session, artifact.id)[DerivativeKind.THUMBNAIL].storage_key
+        )
+
+    @pytest.mark.parametrize("file_type", ["stl", "obj", "3mf"])
+    def test_keeps_basics_ahead_of_optional_analysis(
+        self,
+        db_session,
+        stored,
+        make_system_config,
+        monkeypatch,
+        staged_mesh_outputs,
+        file_type,
+    ):
+        from app.modules.media import thumbnail_handoff
+        from tests.factories.geometry import tetrahedron
+
+        payload = tetrahedron().export(file_type=file_type)
+        if isinstance(payload, str):
+            payload = payload.encode()
+        artifact = stored(f"fingerprint-order.{file_type}", payload)
+        make_system_config(
+            similarity_settings_json=json.dumps(
+                {"enabled": True, "fingerprint_on_ingest": True}
+            )
+        )
+        monkeypatch.setattr(extensions, "_derivatives", similarity_ingestion)
+        monkeypatch.setattr(
+            thumbnail_handoff,
+            "plan",
+            lambda *a: pytest.fail("optional analysis entered deferred thumbnail path"),
+        )
+
+        def worker(request, *, on_output):
+            assert request.include_fingerprint
+            for frame in staged_mesh_outputs:
+                on_output(frame)
+            db_session.expire_all()
+            assert all(
+                row.state is DerivativeState.READY
+                for row in _rows(db_session, artifact.id).values()
+            )
+            raise mesh_isolation.MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
+
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+        outcome = producers.derive_mesh(artifact.id)
+        assert outcome.kinds[DerivativeKind.THUMBNAIL] is DerivativeState.READY
+        assert get_backend().exists(
+            _rows(db_session, artifact.id)[DerivativeKind.THUMBNAIL].storage_key
+        )
+
+    def test_records_host_admission_expiry(self, db_session, stored, monkeypatch):
+        from app.modules.media import thumbnail_handoff
+        from app.runtime.native_admission import Resources
+
+        artifact = stored("host-timeout.3mf", three_mf())
+        plan = thumbnail_handoff.HandoffPlan(
+            640, 480, Resources(1, 100), Resources(4, 400)
+        )
+        monkeypatch.setattr(thumbnail_handoff, "plan", lambda *a: plan)
+
+        @contextmanager
+        def expire(*a, **k):
+            raise TimeoutError("thumbnail_deadline")
+            yield
+
+        monkeypatch.setattr(thumbnail_handoff, "reserve", expire)
+        monkeypatch.setattr(
+            mesh_isolation,
+            "generate",
+            lambda *a, **k: pytest.fail("expired job parsed"),
+        )
+        outcome = producers.derive_mesh(artifact.id)
+        assert outcome.kinds[DerivativeKind.THUMBNAIL] is DerivativeState.FAILED
+        assert (
+            _rows(db_session, artifact.id)[DerivativeKind.THUMBNAIL].failure_reason
+            == "timeout"
+        )
+
+    def test_drops_result_before_host_release_on_supersession(
+        self, stored, monkeypatch, staged_mesh_outputs
+    ):
+        import weakref
+
+        from app.modules.derivatives import records
+        from app.modules.media import thumbnail_handoff
+        from app.runtime.native_admission import Resources
+
+        artifact = stored("superseded-owner.3mf", three_mf())
+        plan = thumbnail_handoff.HandoffPlan(
+            640, 480, Resources(1, 100), Resources(4, 400)
+        )
+        monkeypatch.setattr(thumbnail_handoff, "plan", lambda *a: plan)
+        references = []
+
+        class Result:
+            def __init__(self):
+                self.image = bytes(1024 * 1024)
+
+            @property
+            def fingerprint_result(self):
+                raise records.AttemptSuperseded()
+
+        @contextmanager
+        def host(*a, **k):
+            try:
+                yield object()
+            finally:
+                assert references and references[0]() is None
+
+        monkeypatch.setattr(thumbnail_handoff.preparation_runtime, "reserve_host", host)
+
+        def worker(request, *, on_output, handoff):
+            for frame in staged_mesh_outputs:
+                on_output(frame)
+            result = Result()
+            references.append(weakref.ref(result))
+            return result
+
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+        outcome = producers.derive_mesh(artifact.id)
+        assert outcome.kinds[DerivativeKind.THUMBNAIL] is DerivativeState.READY
+
+    def test_publishes_the_renderer_frame(
+        self, db_session, stored, monkeypatch, staged_mesh_outputs
+    ):
+        artifact = stored("framed.3mf", three_mf())
+        geometry, thumbnail = staged_mesh_outputs
+
+        def worker(_request, *, on_output):
+            on_output(geometry)
+            on_output(thumbnail)
+            raise mesh_isolation.MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
+
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+
+        outcome = producers.derive_mesh(artifact.id)
+
+        assert outcome.kinds[DerivativeKind.THUMBNAIL] is DerivativeState.READY
+        db_session.expire_all()
+        row = _rows(db_session, artifact.id)[DerivativeKind.THUMBNAIL]
+        assert get_backend().read_bytes(row.storage_key) == thumbnail.image
+
     @pytest.mark.parametrize(
         "later_failure",
         [
@@ -2198,8 +2384,8 @@ class TestStagedMeshPublication:
     ):
         from app.db.session import get_session_factory
 
-        source = content.binary_stl()
-        artifact = stored("staged.stl", source)
+        source = three_mf()
+        artifact = stored("staged.3mf", source)
         observed = []
 
         def worker(_request, *, on_output):
@@ -2247,7 +2433,7 @@ class TestStagedMeshPublication:
         from app.db.session import get_session_factory
         from app.modules.media.fingerprints import ALGORITHM_VERSION
 
-        artifact = stored("pending-fingerprint.stl", content.binary_stl())
+        artifact = stored("pending-fingerprint.3mf", three_mf())
         make_system_config(
             similarity_settings_json=json.dumps(
                 {"enabled": True, "fingerprint_on_ingest": True}
@@ -2290,7 +2476,7 @@ class TestStagedMeshPublication:
         monkeypatch,
         staged_mesh_outputs,
     ):
-        artifact = stored("render-timeout.stl", content.binary_stl())
+        artifact = stored("render-timeout.3mf", three_mf())
 
         def worker(_request, *, on_output):
             on_output(staged_mesh_outputs[0])
@@ -2316,7 +2502,7 @@ class TestStagedMeshPublication:
         monkeypatch,
         staged_mesh_outputs,
     ):
-        artifact = stored("storage-failure.stl", content.binary_stl())
+        artifact = stored("storage-failure.3mf", three_mf())
         fault = RuntimeError("storage publication failed")
         reached_final = []
 
@@ -2356,7 +2542,7 @@ class TestStagedMeshPublication:
         from app.modules.derivatives import records
         from app.modules.derivatives.kinds import group
 
-        artifact = stored("withdrawn.stl", content.binary_stl())
+        artifact = stored("withdrawn.3mf", three_mf())
         accepted = []
 
         def worker(_request, *, on_output):
@@ -2387,3 +2573,121 @@ class TestStagedMeshPublication:
             _rows(db_session, artifact.id)[DerivativeKind.THUMBNAIL].state
             is not DerivativeState.READY
         )
+
+
+class TestSharedMeshSource:
+    @pytest.mark.parametrize(
+        "failure",
+        [None, "analysis", "preview"],
+        ids=["both-ready", "analysis-fails", "preview-fails"],
+    )
+    def test_publishes_outputs_independently(
+        self, db_session, stored, monkeypatch, staged_mesh_outputs, failure
+    ):
+        artifact = stored("independent.stl", content.binary_stl())
+        observed = []
+
+        def worker(request, *, on_output, **kwargs):
+            assert request.include_thumbnail
+            assert request.include_geometry
+            observed.append(True)
+            geometry, thumbnail = staged_mesh_outputs[:2]
+            if failure != "analysis":
+                on_output(geometry)
+            if failure != "preview":
+                on_output(thumbnail)
+            if failure is not None:
+                raise mesh_isolation.MeshWorkerError(ThumbnailFailureReason.TIMEOUT)
+            return ThumbnailResult(
+                image=thumbnail.image,
+                geometry=geometry.geometry,
+                strategy=ThumbnailStrategy.FULL,
+                geometry_outcome=geometry.outcome,
+                volume=geometry.volume,
+                coverage=thumbnail.coverage,
+                failure_reason=None,
+                duration_ms=10,
+                peak_rss_bytes=None,
+            )
+
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+
+        result = producers.derive_mesh(artifact.id)
+
+        expected = {
+            None: (DerivativeState.READY, DerivativeState.READY),
+            "analysis": (DerivativeState.READY, DerivativeState.FAILED),
+            "preview": (DerivativeState.FAILED, DerivativeState.READY),
+        }[failure]
+        assert observed == [True]
+        assert result.kinds == {
+            DerivativeKind.THUMBNAIL: expected[0],
+            DerivativeKind.METADATA: expected[1],
+        }
+
+    def test_preserves_cancellation(self, db_session, stored, monkeypatch):
+        from app.core.cancellation import OperationCancelled
+
+        artifact = stored("cancel-visual.stl", content.binary_stl())
+        reached = []
+
+        def worker(request, **kwargs):
+            reached.append(request.include_geometry)
+            raise OperationCancelled()
+
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+
+        with pytest.raises(OperationCancelled):
+            producers.derive_mesh(artifact.id)
+
+        assert reached == [True]
+        assert (
+            _rows(db_session, artifact.id)[DerivativeKind.METADATA].state
+            is DerivativeState.RUNNING
+        )
+
+    def test_releases_result_before_host_credit(
+        self, db_session, stored, monkeypatch, staged_mesh_outputs
+    ):
+        import weakref
+
+        from app.modules.media import thumbnail_handoff
+        from app.runtime.native_admission import Resources
+
+        artifact = stored("host-release.stl", content.binary_stl())
+        plan = thumbnail_handoff.HandoffPlan(
+            640, 480, Resources(1, 100), Resources(4, 400)
+        )
+        monkeypatch.setattr(thumbnail_handoff, "plan", lambda *args: plan)
+        released = []
+        references = []
+
+        class VisualResult:
+            image = bytes(1024 * 1024)
+            fingerprint_result = None
+
+        @contextmanager
+        def reserve(*args, **kwargs):
+            yield object()
+            assert references[0]() is None
+            released.append(True)
+
+        def worker(request, *, on_output, **kwargs):
+            assert request.include_geometry
+            assert request.include_thumbnail
+            on_output(staged_mesh_outputs[0])
+            on_output(staged_mesh_outputs[1])
+            result = VisualResult()
+            references.append(weakref.ref(result))
+            return result
+
+        monkeypatch.setattr(thumbnail_handoff, "reserve", reserve)
+        monkeypatch.setattr(mesh_isolation, "generate", worker)
+
+        outcome = producers.derive_mesh(artifact.id)
+
+        assert released == [True]
+        assert outcome.kinds == {
+            DerivativeKind.THUMBNAIL: DerivativeState.READY,
+            DerivativeKind.METADATA: DerivativeState.READY,
+        }

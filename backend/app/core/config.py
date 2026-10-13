@@ -144,6 +144,9 @@ class Settings(BaseSettings):
     db_url: str = Field(default=None, validate_default=True)
     sqlite_synchronous: str = "NORMAL"
     sqlite_busy_timeout_ms: int = Field(default=30_000, ge=1)
+    # Kept SQLite connections. Each costs a page cache and a parsed schema
+    # (a few MiB); one discarded and reopened costs a schema parse per use.
+    sqlite_pool_size: int = Field(default=24, ge=1, le=256)
 
     jwt_secret: str = DEFAULT_JWT_SECRET
     # How a fresh installation gets its first owner (resolved and validated
@@ -216,6 +219,12 @@ class Settings(BaseSettings):
     api_runs_jobs: bool = True
     executor_id: str | None = Field(default=None, min_length=1, max_length=128)
     shared_storage: bool = False
+    # DBOS polls each lane. This is dispatch latency, separate from the
+    # recovery tick; chained ingest/reconcile/derive queues used to each wait 1s.
+    jobs_queue_poll_interval_seconds: float = Field(default=0.25, ge=0.05, le=5)
+    # Lanes nobody waits on (search, upkeep, notifications). Every look at a
+    # queue costs database statements whether or not work is there.
+    jobs_relaxed_queue_poll_interval_seconds: float = Field(default=2.0, ge=0.05, le=60)
     jobs_reconcile_interval_seconds: int = Field(default=300, ge=10, le=86400)
     jobs_reconcile_batch: int = Field(default=500, ge=1, le=10000)
     jobs_lane_headroom_factor: int = Field(default=2, ge=1, le=100)
@@ -290,6 +299,14 @@ class Settings(BaseSettings):
     # the mesh is not loaded; the file is still indexed, and 3MF still gets its
     # embedded slicer preview. This is the hard ceiling; the RAM-aware cap below
     # tightens it further on small hosts.
+    # Portable device selection is independent of durable recipe/model identity.
+    compute_mode: Literal["auto", "cpu"] = "auto"
+    compute_adapter: str | None = None
+    compute_backend: Literal["auto", "vulkan", "opengl"] = "auto"
+    compute_render_policy: Literal["qualified", "preview"] = "qualified"
+    compute_memory_mb: int = Field(default=1024, ge=256, le=65536)
+    compute_batch_wait_ms: int = Field(default=10, ge=0, le=10)
+
     mesh_max_render_triangles: int = Field(default=2_000_000, gt=0)
 
     # Fraction of host/cgroup RAM shared by native mesh work. Admission reserves
