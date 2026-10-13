@@ -20,6 +20,9 @@
 
 - Extend native mesh preview checks for camera movement, screenshot scales, capture failures, and disposal; retain WebGPU as experimental after baseline comparison.
 
+- Open Models faster from the Library: resting the pointer or keyboard focus on
+  a Model card reads its details ahead of the click.
+
 - Release the mesh preview GPU device when renderer construction or initialization cleanup fails.
 
 - Parse mesh previews in a cancellable worker and add an experimental WebGPU
