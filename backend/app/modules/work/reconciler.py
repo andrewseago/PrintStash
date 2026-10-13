@@ -405,7 +405,7 @@ def _repair(definition: JobDefinition, *, now: datetime, result: PassResult) -> 
                     admission.settled(fresh.id)
                 result.failed += 1
                 continue
-        _submit(row.id, result)
+        submit_job(row.id, result)
 
 
 @dataclass
@@ -507,9 +507,19 @@ def _reserve_backfill_epoch(
         return epoch
 
 
-def _submit(
-    job_id: str, result: PassResult, *, lease: _DiscoveryLease | None = None
+def submit_job(
+    job_id: str,
+    result: PassResult,
+    *,
+    lease: _DiscoveryLease | None = None,
+    expedite: bool = False,
 ) -> None:
+    """Submit one active Job's next attempt under the lane's admission rules.
+
+    The one path by which a Job reaches the engine, whether a pass found it or
+    the request that recorded it dispatches it directly: backfill on a FIFO
+    lane reserves its epoch first, and every outcome is counted in ``result``.
+    """
     owned: _DiscoveryLease | None = None
     try:
         with get_session_factory().scoped_session() as session:
@@ -540,7 +550,7 @@ def _submit(
                 return
             outcome = submit(job_id, reserved_backfill_epoch=epoch)
         else:
-            outcome = submit(job_id)
+            outcome = submit(job_id, expedite=expedite)
     except fences.FenceHeld:
         result.count(PassNote.CLAIMED_ELSEWHERE)
         result.deferred += 1
@@ -769,7 +779,7 @@ def _create_and_submit(
         result.skipped += 1
         result.count(item.skip)
         return 1
-    _submit(job_id, result, lease=lease)
+    submit_job(job_id, result, lease=lease)
     return 1
 
 

@@ -225,6 +225,11 @@ class Settings(BaseSettings):
     # Lanes nobody waits on (search, upkeep, notifications). Every look at a
     # queue costs database statements whether or not work is there.
     jobs_relaxed_queue_poll_interval_seconds: float = Field(default=2.0, ge=0.05, le=60)
+    # A lane a request has just dispatched a Job to is polled faster for a short
+    # while: someone is waiting on it, and more of the same batch usually
+    # follows. Idle lanes keep the intervals above. A window of 0 disables it.
+    jobs_boosted_queue_poll_interval_seconds: float = Field(default=0.1, ge=0.01, le=5)
+    jobs_queue_boost_seconds: float = Field(default=3.0, ge=0, le=600)
     jobs_reconcile_interval_seconds: int = Field(default=300, ge=10, le=86400)
     jobs_reconcile_batch: int = Field(default=500, ge=1, le=10000)
     jobs_lane_headroom_factor: int = Field(default=2, ge=1, le=100)
@@ -236,6 +241,10 @@ class Settings(BaseSettings):
     jobs_resubmit_cooldown_seconds: int = Field(default=30, ge=0, le=3600)
     jobs_resubmit_burst: int = Field(default=3, ge=1, le=100)
     jobs_submit_grace_seconds: int = Field(default=60, ge=1, le=3600)
+    # Progress a step reports before its attempt has run this long is held and
+    # written with the next write, so a short attempt costs no transaction for
+    # reports nobody could have read.
+    jobs_progress_hold_seconds: float = Field(default=1.0, ge=0, le=60)
     jobs_executor_stale_seconds: int = Field(default=120, ge=10, le=86400)
     jobs_retention_days: int = Field(default=7, ge=1, le=365)
     jobs_system_retention_hours: int = Field(default=24, ge=1, le=8760)
@@ -438,6 +447,10 @@ class Settings(BaseSettings):
     # disposable child so a file that outgrows its memory budget costs one
     # process rather than the API. This is that child's wall-clock deadline.
     mesh_worker_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    # A mesh worker is forked from a template process that has already imported
+    # the application and its geometry libraries, instead of starting a fresh
+    # interpreter per Artifact. Linux only; off, every worker is spawned.
+    mesh_worker_template_enabled: bool = True
 
     # Oversized STL previews run in a disposable, streaming worker. The worker
     # deadline is intentionally capped by the service so an operator override

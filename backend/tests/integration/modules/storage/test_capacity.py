@@ -1,13 +1,20 @@
-"""Capacity admission never lets concurrent owners spend the same free bytes."""
+"""Capacity admission never lets concurrent owners spend the same free bytes.
+
+A transient claim is admitted against the same budget but kept in this process
+and published as one lease row per process. When this goes red, either two
+owners can be admitted into the same bytes, or every piece of scratch space
+costs the database two write transactions again.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
+from sqlalchemy import event
 from sqlmodel import SQLModel, create_engine, select
 
 from app.core.errors import OperationError
-from app.db.models import CapacityAdmissionEvent
+from app.db.models import CapacityAdmissionEvent, CapacityReservation
 from app.db.session import SQLiteSessionFactory, get_session_factory
 from app.modules.storage.capacity import CapacityManager, CapacityResource
 
@@ -225,6 +232,305 @@ class TestCapacityManager:
         monkeypatch.setattr(os, "statvfs", unavailable)
         with pytest.raises(OperationError, match="storage_capacity_unavailable"):
             manager.reserve("probe", [resource])
+
+
+def _quota(size: int, *, free: int = 100, domain: str = "one") -> CapacityResource:
+    return CapacityResource.for_quota(domain, size, free, role="scratch")
+
+
+@pytest.fixture
+def commits(db_session) -> list[bool]:
+    """One entry per transaction the application database commits."""
+    seen: list[bool] = []
+
+    def record(_conn) -> None:
+        seen.append(True)
+
+    target = db_session.get_bind()
+    event.listen(target, "commit", record)
+    yield seen
+    event.remove(target, "commit", record)
+
+
+class TestTransientClaims:
+    def test_a_claim_is_counted_by_every_other_admission(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("upload", [_quota(60)])
+
+    def test_a_claim_counts_what_other_owners_reserved(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("upload", [_quota(60)])
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+
+    def test_two_claims_of_one_process_cannot_share_bytes(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("thumbnail:2", [_quota(60)], transient=True)
+
+    def test_a_refused_claim_holds_nothing(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("thumbnail:1", [_quota(101)], transient=True)
+
+        assert (manager.transient_claims(), manager.reserved_bytes()) == ({}, {})
+
+    def test_a_refusal_is_recorded_for_operators(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("thumbnail:1", [_quota(101)], transient=True)
+
+        event_row = db_session.exec(select(CapacityAdmissionEvent)).one()
+        assert (event_row.operation_kind, event_row.required_bytes) == (
+            "thumbnail",
+            101,
+        )
+
+    def test_publishes_one_lease_for_all_of_the_process(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+        manager.reserve("thumbnail:2", [_quota(30)], transient=True)
+
+        rows = db_session.exec(select(CapacityReservation)).all()
+        assert (len(rows), manager.reserved_bytes()["quota:one"] >= 50) == (1, True)
+
+    def test_a_released_claim_is_no_longer_held(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        handle = manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+
+        handle.release()
+
+        assert manager.transient_claims() == {}
+
+    def test_a_claim_inside_the_lease_commits_nothing(
+        self, db_session, commits: list[bool]
+    ):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(40)], transient=True).release()
+        commits.clear()
+
+        manager.reserve("thumbnail:2", [_quota(40)], transient=True).release()
+
+        assert commits == []
+
+    def test_a_claim_above_the_lease_raises_it(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(20)], transient=True).release()
+
+        manager.reserve("thumbnail:2", [_quota(70)], transient=True)
+
+        assert manager.reserved_bytes() == {"quota:one": 70}
+
+    def test_a_raised_lease_leaves_room_for_the_burst_to_grow(
+        self, db_session, commits: list[bool]
+    ):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+        commits.clear()
+
+        manager.reserve("thumbnail:2", [_quota(20)], transient=True)
+
+        assert commits == []
+
+    def test_room_to_grow_is_not_taken_where_it_does_not_fit(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+
+        assert manager.reserved_bytes() == {"quota:one": 60}
+
+    def test_room_to_grow_never_refuses_its_own_process(self, db_session):
+        # The lease holds 60 for a 30-byte claim. An upload of 60 still fits
+        # beside what is really held, and is admitted.
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(30)], transient=True)
+
+        manager.reserve("upload", [_quota(60)])
+
+        assert manager.operation_reservations() == ["upload"]
+
+    def test_a_claim_inside_the_lease_is_still_refused_on_a_full_volume(
+        self, db_session
+    ):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=10)
+        manager.reserve("thumbnail:1", [_quota(40)], transient=True).release()
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            manager.reserve("thumbnail:2", [_quota(40, free=45)], transient=True)
+
+    def test_a_lease_whose_row_is_gone_is_published_again(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(20)], transient=True).release()
+        db_session.delete(db_session.exec(select(CapacityReservation)).one())
+        db_session.commit()
+
+        manager.reserve("thumbnail:2", [_quota(20)], transient=True)
+
+        assert manager.reserved_bytes()["quota:one"] >= 20
+
+    def test_the_same_operation_cannot_claim_different_bytes(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+
+        with pytest.raises(OperationError, match="capacity_operation_conflict"):
+            manager.reserve("thumbnail:1", [_quota(30)], transient=True)
+
+    def test_a_renewal_replaces_what_the_operation_holds(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        handle = manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+
+        handle.renew([_quota(50)])
+
+        assert manager.transient_claims() == {"thumbnail:1": {"quota:one": 50}}
+
+    def test_a_refused_renewal_keeps_what_was_held(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        handle = manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+
+        with pytest.raises(OperationError, match="storage_capacity_exceeded"):
+            handle.renew([_quota(101)])
+
+        assert manager.transient_claims() == {"thumbnail:1": {"quota:one": 20}}
+
+    def test_a_released_claim_cannot_be_renewed(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        handle = manager.reserve("thumbnail:1", [_quota(20)], transient=True)
+        handle.release()
+
+        with pytest.raises(OperationError, match="capacity_reservation_lost"):
+            handle.renew()
+
+    def test_a_held_claim_is_released_when_its_operation_fails(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        with pytest.raises(ValueError):
+            with manager.hold("thumbnail:1", [_quota(20)], transient=True):
+                raise ValueError("failed")
+
+        assert manager.transient_claims() == {}
+
+    def test_a_durable_claim_cannot_be_transient(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        with pytest.raises(ValueError, match="invalid capacity reservation"):
+            manager.reserve("upload", [_quota(20)], durable=True, transient=True)
+
+    @pytest.mark.parametrize(
+        ("operation", "resources"),
+        [("", [_quota(1)]), ("x" * 201, [_quota(1)]), ("thumbnail:1", [])],
+        ids=["no-id", "long-id", "no-resources"],
+    )
+    def test_rejects_an_invalid_claim(self, db_session, operation, resources):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+
+        with pytest.raises(ValueError, match="invalid capacity reservation"):
+            manager.reserve(operation, resources, transient=True)
+
+    def test_concurrent_claims_never_exceed_the_volume(self, tmp_path):
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'capacity.db'}",
+            connect_args={"check_same_thread": False},
+        )
+        SQLModel.metadata.create_all(engine)
+        manager = CapacityManager(SQLiteSessionFactory(engine), headroom_bytes=0)
+        barrier = Barrier(2)
+
+        def claim(owner):
+            barrier.wait()
+            try:
+                manager.reserve(owner, [_quota(60)], transient=True)
+                return True
+            except OperationError:
+                return False
+
+        with ThreadPoolExecutor(2) as pool:
+            outcomes = list(pool.map(claim, ["thumbnail:1", "thumbnail:2"]))
+
+        assert sorted(outcomes) == [False, True]
+        engine.dispose()
+
+
+class TestTrimLease:
+    def test_keeps_the_lease_a_burst_in_progress_fits_in(
+        self, db_session, commits: list[bool]
+    ):
+        # The claim that raised the lease has been released, but only just: the
+        # next one of the same burst must not have to raise it again.
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True).release()
+        commits.clear()
+
+        trimmed = manager.trim_lease()
+
+        assert (trimmed, commits, manager.reserved_bytes()) == (
+            False,
+            [],
+            {"quota:one": 60},
+        )
+
+    def test_hands_back_what_a_passed_burst_no_longer_holds(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True).release()
+        manager.trim_lease()
+
+        trimmed = manager.trim_lease()
+
+        assert (trimmed, manager.reserved_bytes()) == (True, {})
+
+    def test_lowers_the_lease_to_the_recent_peak(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True).release()
+        manager.trim_lease()
+        manager.reserve("thumbnail:2", [_quota(20)], transient=True).release()
+
+        manager.trim_lease()
+
+        assert manager.reserved_bytes() == {"quota:one": 20}
+
+    def test_never_lowers_the_lease_below_what_is_held(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+        manager.trim_lease()
+
+        manager.trim_lease()
+
+        assert manager.reserved_bytes() == {"quota:one": 60}
+
+    def test_a_lease_already_exact_commits_nothing(
+        self, db_session, commits: list[bool]
+    ):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("thumbnail:1", [_quota(60)], transient=True)
+        commits.clear()
+
+        trimmed = manager.trim_lease()
+
+        assert (trimmed, commits) == (False, [])
+
+    def test_a_process_without_a_lease_commits_nothing(
+        self, db_session, commits: list[bool]
+    ):
+        trimmed = CapacityManager(get_session_factory()).trim_lease()
+
+        assert (trimmed, commits) == (False, [])
+
+    def test_leaves_other_owners_reservations(self, db_session):
+        manager = CapacityManager(get_session_factory(), headroom_bytes=0)
+        manager.reserve("upload", [_quota(30)])
+        manager.reserve("thumbnail:1", [_quota(40)], transient=True).release()
+        manager.trim_lease()
+
+        manager.trim_lease()
+
+        assert manager.reserved_bytes() == {"quota:one": 30}
 
 
 class TestPercentageHeadroom:

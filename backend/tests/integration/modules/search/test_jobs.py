@@ -82,6 +82,33 @@ class TestProjectJob:
         db_session.expire_all()
         assert db_session.exec(select(SearchProjectionRequest)).all() == []
 
+    def test_a_request_that_keeps_changing_leaves_the_drain_with_work(
+        self,
+        db_session: Session,
+        make_search_projection_request,
+        make_model,
+        monkeypatch,
+    ) -> None:
+        # Every page it reads is overtaken before it can be written: the unit
+        # wrote nothing, and the request it could not write is still due.
+        from app.modules.search import projection
+
+        make_search_projection_request(ContentSource("model", make_model().id))
+        monkeypatch.setattr(projection, "apply_prepared", lambda _session, _page: None)
+
+        worked = jobs._project_unit()
+
+        assert (
+            worked,
+            len(db_session.exec(select(SearchProjectionRequest)).all()),
+        ) == (
+            True,
+            1,
+        )
+
+    def test_an_idle_projection_reports_no_work(self, db_session: Session) -> None:
+        assert jobs._project_unit() is False
+
     def test_a_library_change_nudges_it(
         self, db_session: Session, make_model, work_engine
     ) -> None:
@@ -606,7 +633,8 @@ class TestDrain:
         def cancelled(self) -> bool:
             return False
 
-        def update(self, **fields) -> None:
+        def settle(self, outcome, **fields) -> None:
+            self.outcome = outcome
             self.fields.update(fields)
 
     def test_stops_at_its_unit_budget(self) -> None:
@@ -615,7 +643,19 @@ class TestDrain:
         done = jobs._drain(context, lambda: True)  # type: ignore[arg-type]
 
         assert done == jobs._DRAIN_UNITS
-        assert context.fields == {"processed": jobs._DRAIN_UNITS}
+
+    def test_ends_its_job_with_what_it_processed(self) -> None:
+        # The count rides on the Job's terminal write: a drain is the whole of
+        # its step, so a progress write just before the end would be a second
+        # transaction for the same fact.
+        context = self._Context()
+
+        jobs._drain(context, lambda: True)  # type: ignore[arg-type]
+
+        assert (context.outcome, context.fields) == (
+            JobOutcome.COMPLETED,
+            {"processed": jobs._DRAIN_UNITS},
+        )
 
     def test_stops_when_there_is_nothing_left(self) -> None:
         calls = []

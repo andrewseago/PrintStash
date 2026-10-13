@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import event
 from sqlmodel import Session
 
+from app.core.config import _overlay
 from app.core.time import utcnow
 from app.db.models import (
     SENTINEL_FILE_HASH,
@@ -419,6 +420,24 @@ class TestPending:
         assert _pending(db_session, limit=0) == []
 
 
+class TestThumbnailWidth:
+    def test_a_thumbnail_made_at_another_width_is_not_made_again(
+        self, db_session: Session, mesh, make_derivative
+    ) -> None:
+        # The width is a preference for new thumbnails. Changing it, or its
+        # default, must not send the whole library back through the renderer.
+        artifact = mesh()
+        make_derivative(artifact, DerivativeKind.METADATA)
+        make_derivative(
+            artifact,
+            DerivativeKind.THUMBNAIL,
+            output_json='{"width":640,"height":480}',
+        )
+        _overlay["model_thumbnail_width"] = 320
+
+        assert _pending(db_session) == []
+
+
 class TestBoundedScan:
     def test_revisits_old_artifacts_through_the_rotating_window(
         self, db_session: Session, mesh, make_derivative, monkeypatch
@@ -479,6 +498,32 @@ class TestBoundedScan:
 
         # One query per stage, whatever the library holds: nothing per Artifact.
         assert statements_for_one_pass() == small
+
+    def test_reads_the_whole_pass_before_it_writes_the_cursor(
+        self, db_session: Session, mesh
+    ) -> None:
+        # The first write is what takes the database's writer. A cursor flushed
+        # while the scan was still reading held it for every query after.
+        from app.db.session import get_session_factory
+
+        mesh()
+        mesh()
+        engine = db_session.get_bind()
+        with get_session_factory().scoped_session() as session:
+            MESH.pending(session, now=utcnow(), limit=10)
+        seen: list[str] = []
+
+        def record(_conn, _cursor, statement, *_args):
+            seen.append(statement.split()[0].upper())
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            with get_session_factory().scoped_session() as session:
+                MESH.pending(session, now=utcnow(), limit=1)
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        assert (seen.count("UPDATE"), seen[-1]) == (1, "UPDATE")
 
 
 class TestNextDue:

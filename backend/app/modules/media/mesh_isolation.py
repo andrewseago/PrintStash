@@ -25,7 +25,6 @@ import shutil
 import signal
 import stat
 import struct
-import subprocess  # nosec B404 - fixed interpreter/module invocation only
 import sys
 import tempfile
 import time
@@ -42,7 +41,7 @@ from printstash_core.mesh.similarity import GeometryError
 from app import __file__ as application_file
 from app.core.cancellation import OperationCancelled, checkpoint
 from app.core.native_settings import settings
-from app.modules.media import mesh_policy, native_process
+from app.modules.media import mesh_policy, native_process, worker_launch
 from app.modules.media.fingerprints import (
     FingerprintRecord,
     FingerprintResult,
@@ -355,7 +354,7 @@ class _CallbackWatchdog:
         with self.lifecycle:
             return self.failure
 
-    def poll(self, process: subprocess.Popen[bytes]) -> int | None:
+    def poll(self, process: worker_launch.Worker) -> int | None:
         with self.lifecycle:
             code = process.poll()
             if code is not None:
@@ -382,6 +381,21 @@ def _watchdog_error(cause: WorkerExitCause) -> MeshWorkerError:
         if cause is WorkerExitCause.MEMORY_LIMIT
         else ThumbnailFailureReason.WORKER_FAILED
     )
+
+
+def _exit_descriptor(pid: int) -> int | None:
+    """A descriptor that becomes readable when ``pid`` exits, where there is one.
+
+    Linux only. Without it the supervisor learns of an exit by asking, which
+    it then has to do often enough not to add latency to every worker.
+    """
+    opener = getattr(os, "pidfd_open", None)
+    if opener is None:
+        return None
+    try:
+        return opener(pid)
+    except OSError:
+        return None
 
 
 def supervise_result(
@@ -419,7 +433,8 @@ def supervise_result(
     cause = WorkerExitCause.SPAWN_FAILED
     error: MeshWorkerError | None = None
     cancelled: OperationCancelled | None = None
-    process: subprocess.Popen[bytes] | None = None
+    process: worker_launch.Worker | None = None
+    exit_descriptor: int | None = None
     watchdog: _CallbackWatchdog | None = None
     temporary = (
         tempfile.TemporaryDirectory(prefix="printstash-mesh-")
@@ -437,14 +452,9 @@ def supervise_result(
     inherited = launch_resources(permit) if permit is not None else None
     try:
         try:
-            process = subprocess.Popen(  # nosec B603 - fixed argv; no shell
+            process = worker_launch.launch(
                 command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                pass_fds=inherited.descriptors if inherited is not None else (),
-                env={
+                environment={
                     **os.environ,
                     **(environment if environment is not None else {}),
                     "OMP_NUM_THREADS": "1",
@@ -455,7 +465,9 @@ def supervise_result(
                     PRIORITY_ENV: current_priority().value,
                     **(inherited.environment if inherited is not None else {}),
                 },
+                descriptors=inherited.descriptors if inherited is not None else (),
                 cwd=Path(application_file).resolve().parent.parent,
+                warm=settings.mesh_worker_template_enabled,
             )
         except OSError as exc:
             raise MeshWorkerError(ThumbnailFailureReason.WORKER_FAILED) from exc
@@ -468,9 +480,13 @@ def supervise_result(
                 process.pid, deadline, memory_budget, lifecycle
             )
             watchdog.thread.start()
+        exit_descriptor = _exit_descriptor(process.pid)
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
+            if exit_descriptor is not None:
+                selector.register(exit_descriptor, selectors.EVENT_READ)
             stdout_closed = False
+            exit_watched = exit_descriptor is not None
             while True:
                 checkpoint()
                 if withdrawn is not None and withdrawn():
@@ -494,9 +510,20 @@ def supervise_result(
                         if rss > memory_budget:
                             cause = WorkerExitCause.MEMORY_LIMIT
                             raise MeshWorkerError(ThumbnailFailureReason.RESOURCE_LIMIT)
+                # Once the reply has ended only the exit is awaited. Its
+                # descriptor wakes this loop the moment it happens; without one
+                # the exit has to be asked for, often.
                 for key, _ in selector.select(
-                    _REAP_POLL_SECONDS if stdout_closed else _POLL_SECONDS
+                    _REAP_POLL_SECONDS
+                    if stdout_closed and not exit_watched
+                    else _POLL_SECONDS
                 ):
+                    if key.fd == exit_descriptor:
+                        # Readable from now on: stop watching, keep reading
+                        # whatever the reply still holds.
+                        selector.unregister(key.fd)
+                        exit_watched = False
+                        continue
                     chunk = os.read(key.fd, 65536)
                     if not chunk:
                         stdout_closed = True
@@ -584,6 +611,8 @@ def supervise_result(
                 peak_rss = (
                     observed_rss if peak_rss is None else max(peak_rss, observed_rss)
                 )
+        if exit_descriptor is not None:
+            os.close(exit_descriptor)
         try:
             if process is not None:
                 terminate_worker(process, lifecycle)
@@ -935,6 +964,7 @@ def generate(
                         role="STEP tessellation",
                     )
                 ],
+                transient=True,
             )
             resources.callback(reservation.release)
         run_options = {"deadline": handoff.deadline} if handoff is not None else {}

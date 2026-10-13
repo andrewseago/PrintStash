@@ -2,7 +2,7 @@
 
 Every endpoint here does the same three things and nothing heavier: stage the
 bytes (streamed and hashed on the way in), record an ``IngestRequest`` with its
-queued Job and staging lease in one transaction, and nudge the job's
+queued Job and staging lease in one transaction, and dispatch the job's
 definition. Hashing into the vault, deduplication, parsing and thumbnails all
 happen in background Jobs; poll ``GET /api/v1/jobs/{job_id}`` or subscribe to
 ``/api/v1/events/ws`` for progress.
@@ -53,7 +53,7 @@ from app.modules.identity import rbac
 from app.modules.ingestion import background as ingest_background
 from app.modules.ingestion import importer, orca, requests, staging_leases
 from app.modules.storage import storage
-from app.modules.work import nudge
+from app.modules.work import service as work_service
 from app.schemas.ingest import (
     ArchiveSelectRequest,
     CollectionSelectRequest,
@@ -122,6 +122,7 @@ def _stage_upload(upload: UploadFile, suffix: str) -> tuple[Path, int, str]:
         with CapacityManager(get_session_factory()).hold(
             f"upload:{staged.name}",
             [CapacityResource.for_path(staged.parent, estimate, role="upload staging")],
+            transient=True,
         ):
             size = storage.stream_to_path(
                 upload.file,
@@ -147,7 +148,7 @@ def _accept_staged(
     sha256: str,
     **columns,
 ) -> JobAccepted:
-    """Record the request, its Job and its lease together; then nudge.
+    """Record the request, its Job and its lease together; then dispatch.
 
     Capacity is checked by the lease before anything is recorded. A request
     that cannot be recorded leaves no staged bytes behind.
@@ -174,7 +175,7 @@ def _accept_staged(
         session.rollback()
         staged.unlink(missing_ok=True)
         raise
-    nudge(requests.DEFINITIONS[kind])
+    work_service.dispatch(request.job_id, requests.DEFINITIONS[kind])
     return JobAccepted(job_id=request.job_id)
 
 
@@ -438,7 +439,9 @@ def ingest_url(
             tags=req.tags,
         )
         session.commit()
-        nudge(requests.DEFINITIONS[IngestRequestKind.URL])
+        work_service.dispatch(
+            request.job_id, requests.DEFINITIONS[IngestRequestKind.URL]
+        )
         return JobAccepted(job_id=request.job_id)
 
 
@@ -540,7 +543,9 @@ def select_archive_entries(
             raise HTTPException(status_code=410, detail="archive_expired") from exc
         requests.claim_manifest(session, manifest_request)
         session.commit()
-        nudge(requests.DEFINITIONS[IngestRequestKind.ARCHIVE_SELECTION])
+        work_service.dispatch(
+            request.job_id, requests.DEFINITIONS[IngestRequestKind.ARCHIVE_SELECTION]
+        )
         return JobAccepted(job_id=request.job_id)
 
 
@@ -587,7 +592,9 @@ def select_model_files(
         )
         requests.claim_manifest(session, _source)
         session.commit()
-        nudge(requests.DEFINITIONS[IngestRequestKind.URL_SELECTION])
+        work_service.dispatch(
+            request.job_id, requests.DEFINITIONS[IngestRequestKind.URL_SELECTION]
+        )
         return JobAccepted(job_id=request.job_id)
 
 
@@ -643,5 +650,7 @@ def select_collection_members(
         )
         requests.claim_manifest(session, source)
         session.commit()
-        nudge(requests.DEFINITIONS[IngestRequestKind.COLLECTION])
+        work_service.dispatch(
+            request.job_id, requests.DEFINITIONS[IngestRequestKind.COLLECTION]
+        )
         return JobAccepted(job_id=request.job_id)

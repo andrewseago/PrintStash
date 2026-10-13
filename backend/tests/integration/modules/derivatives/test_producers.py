@@ -43,6 +43,7 @@ from app.db.models import (
     Metadata,
     Model,
 )
+from app.db.session import get_session_factory
 from app.modules.derivatives import kinds, producers
 from app.modules.ingestion import extensions
 from app.modules.library.volume_metadata import apply_volume, read_volume
@@ -63,7 +64,7 @@ from app.modules.media.mesh_protocol import BasicOutput, GeometryOutput, Thumbna
 from app.modules.media.thumbnail_publication import ThumbnailPublicationError
 from app.modules.media.worker_bootstrap import command
 from app.modules.similarity import ingestion as similarity_ingestion
-from app.modules.storage.capacity import CapacityReservation
+from app.modules.storage.capacity import CapacityManager
 from app.modules.storage.storage_backend.runtime import get_backend
 from app.modules.work import events, runner, service
 from app.modules.work.jobs import jobs
@@ -877,7 +878,9 @@ class TestDeriveMesh:
         self, db_session: Session, stored, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Slowness may be the machine, not the file, so it keeps its backoff.
-        monkeypatch.setitem(_overlay, "mesh_worker_timeout_seconds", 0.2)
+        # A deadline no worker can meet, however it is started: a warm one
+        # answers a small file well inside a fifth of a second.
+        monkeypatch.setitem(_overlay, "mesh_worker_timeout_seconds", 0.001)
         artifact = stored("cube.stl", content.binary_stl())
 
         outcome = producers.derive_mesh(artifact.id)
@@ -1347,7 +1350,7 @@ class TestMeshCancellation:
         for pid in json.loads(pids.read_text()):
             assert not Path(f"/proc/{pid}").exists()
         assert not Path(ready.read_text()).exists()
-        assert db_session.exec(select(CapacityReservation)).all() == []
+        assert CapacityManager(get_session_factory()).transient_claims() == {}
         db_session.expire_all()
         rows = db_session.exec(
             select(ArtifactDerivative).where(ArtifactDerivative.file_id == artifact.id)
@@ -1367,6 +1370,44 @@ class TestMeshCancellation:
             producers.derive_mesh(healthy.id).kinds[DerivativeKind.METADATA]
             is DerivativeState.READY
         )
+
+
+class TestBegin:
+    def test_commits_what_the_caller_adds_with_the_claims(self, db_session, stored):
+        artifact = stored("claimed.gcode", content.gcode())
+
+        def rename(session, file):
+            file.revision_notes = "claimed"
+            session.add(file)
+
+        producers._begin(artifact.id, JobKind.DERIVATIVES_GCODE, claimed=rename)
+
+        db_session.refresh(artifact)
+        assert artifact.revision_notes == "claimed"
+
+    def test_a_caller_that_fails_leaves_nothing_claimed(self, db_session, stored):
+        from app.db.models import ArtifactDerivative
+
+        artifact = stored("refused.gcode", content.gcode())
+
+        def refuse(_session, _file):
+            raise RuntimeError("continuation unavailable")
+
+        with pytest.raises(RuntimeError, match="continuation unavailable"):
+            producers._begin(artifact.id, JobKind.DERIVATIVES_GCODE, claimed=refuse)
+
+        assert db_session.exec(select(ArtifactDerivative)).all() == []
+
+    def test_an_artifact_that_is_gone_claims_nothing(self, db_session):
+        called: list[int] = []
+
+        begun = producers._begin(
+            404,
+            JobKind.DERIVATIVES_GCODE,
+            claimed=lambda _session, file: called.append(file.id),
+        )
+
+        assert (begun, called) == (None, [])
 
 
 class TestAttemptPublication:
@@ -1937,7 +1978,7 @@ class TestDeriveViewerStl:
         assert proof.state is StorageObjectState.PENDING
         assert not backend.exists(proof.key)
         assert backend.read_bytes(artifact.path) == original
-        assert db_session.exec(select(CapacityReservation)).all() == []
+        assert CapacityManager(get_session_factory()).transient_claims() == {}
 
     def test_cancelled_conversion_retains_only_pending_ownership(
         self, db_session, stored, monkeypatch, viewer_conversion
