@@ -401,6 +401,46 @@
     animation: folder-in-back var(--duration-fast) var(--ease-out) both;
   }
 
+  /* Library grid cards after a folder change: each card settles in on its own,
+     30ms apart and capped at 10 like .stagger-children. "backwards" releases the
+     final transform so press feedback (active:scale) still works afterwards. */
+  .folder-cards-forward > * {
+    animation: folder-in-forward var(--duration-fast) var(--ease-out) backwards;
+  }
+  .folder-cards-back > * {
+    animation: folder-in-back var(--duration-fast) var(--ease-out) backwards;
+  }
+  .folder-cards-jump > * {
+    animation: fade-in var(--duration-fast) var(--ease-out) backwards;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(2) {
+    animation-delay: 30ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(3) {
+    animation-delay: 60ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(4) {
+    animation-delay: 90ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(5) {
+    animation-delay: 120ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(6) {
+    animation-delay: 150ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(7) {
+    animation-delay: 180ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(8) {
+    animation-delay: 210ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(9) {
+    animation-delay: 240ms;
+  }
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(n + 10) {
+    animation-delay: 270ms;
+  }
+
   /* Entrance stagger for card grids. Children settle 30ms apart so a page reads
      as a sequence instead of one flat block. Capped at ~10: a 60-card page must
      land well inside the 300ms UI budget, so everything past the 10th shares the
@@ -459,6 +499,12 @@
      fades in at once rather than marching in. :nth-child(n) matches the (0,2,0)
      specificity of the stagger rules above so this override actually wins. */
   .stagger-children > *:nth-child(n) {
+    animation-delay: 0ms;
+  }
+  /* Folder cards fade without moving or marching in. Same (0,2,0) specificity
+     as the delay rules above, declared later, so it wins. */
+  :is(.folder-cards-forward, .folder-cards-back, .folder-cards-jump) > *:nth-child(n) {
+    animation-name: fade-in;
     animation-delay: 0ms;
   }
 }

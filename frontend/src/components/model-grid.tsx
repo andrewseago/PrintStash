@@ -1,6 +1,11 @@
 "use client";
 
-import { FOLDER_MOVE_CLASS, folderMove } from "@/lib/folder-transition";
+import {
+  FOLDER_CARDS_CLASS,
+  FOLDER_MOVE_CLASS,
+  folderMove,
+  type FolderMove,
+} from "@/lib/folder-transition";
 import { useLibraryNavigationReads } from "@/features/library/navigation-reads";
 import { useTaxonomyCommands } from "@/features/library/taxonomy";
 
@@ -1031,17 +1036,14 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   // `null` until the first snapshot lands: opening a folder by URL is arriving,
   // not moving, so the first settled folder must not animate.
   const displayedPath = snapshot === null ? null : (displayedCollection?.path ?? "");
-  const [folderEntrance, setFolderEntrance] = useState<{ path: string | null; className: string }>({
-    path: displayedPath,
-    className: "",
-  });
+  const [folderEntrance, setFolderEntrance] = useState<{
+    path: string | null;
+    move: FolderMove | null;
+  }>({ path: displayedPath, move: null });
   if (displayedPath !== null && folderEntrance.path !== displayedPath) {
     setFolderEntrance({
       path: displayedPath,
-      className:
-        folderEntrance.path === null
-          ? ""
-          : FOLDER_MOVE_CLASS[folderMove(folderEntrance.path, displayedPath)],
+      move: folderEntrance.path === null ? null : folderMove(folderEntrance.path, displayedPath),
     });
   }
   const onAuthorityRetired = useCallback(() => {
@@ -2897,10 +2899,10 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
               ) : viewMode === "grid" ? (
                 <div
                   key={`grid:${folderEntrance.path ?? ""}`}
-                  className={`${folderEntrance.className} ${compact ? "p-3" : "p-4 sm:p-6"}`}
+                  className={compact ? "p-3" : "p-4 sm:p-6"}
                 >
                   <div
-                    className={`grid grid-cols-1 ${compact ? "gap-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,260px))]" : "gap-4 sm:grid-cols-[repeat(auto-fill,minmax(340px,340px))]"}`}
+                    className={`${folderEntrance.move ? FOLDER_CARDS_CLASS[folderEntrance.move] : ""} grid grid-cols-1 ${compact ? "gap-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,260px))]" : "gap-4 sm:grid-cols-[repeat(auto-fill,minmax(340px,340px))]"}`}
                   >
                     {visibleCollections.map((collection) => (
                       <CollectionFolderCard
@@ -2959,7 +2961,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                 <div
                   key={`list:${folderEntrance.path ?? ""}`}
                   ref={listContent}
-                  className={`${folderEntrance.className} flex-1 overflow-y-auto`}
+                  className={`${folderEntrance.move ? FOLDER_MOVE_CLASS[folderEntrance.move] : ""} flex-1 overflow-y-auto`}
                 >
                   <div className="flex flex-col">
                     <div className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs font-mono text-muted-foreground uppercase tracking-wider bg-muted/50">

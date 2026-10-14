@@ -21,3 +21,12 @@ export const FOLDER_MOVE_CLASS = {
   back: "folder-in-back",
   jump: "fade-in",
 } satisfies Record<FolderMove, string>;
+
+/** The grid's cards enter one after another (a capped 30ms stagger) instead of
+ *  the container moving as a block, so a folder whose cards were all cached
+ *  still reads as arriving. */
+export const FOLDER_CARDS_CLASS = {
+  forward: "folder-cards-forward",
+  back: "folder-cards-back",
+  jump: "folder-cards-jump",
+} satisfies Record<FolderMove, string>;
