@@ -334,7 +334,7 @@ class TestFifoStartup:
             "create_engine",
             lambda *a, **k: pytest.fail("fresh database has no persisted queue"),
         )
-        engine._require_fifo_queues_drained()
+        engine._adopt_fifo_queues()
 
     @staticmethod
     def _previous_engine_database(path, rows):
@@ -351,39 +351,45 @@ class TestFifoStartup:
                 [(f"w{n}", *row) for n, row in enumerate(rows)],
             )
 
-    def _inspect(self, tmp_path, rows):
+    def _adopt(self, tmp_path, rows):
+        import sqlite3
+
         from app.modules.work.contracts import LaneOrder
 
         path = tmp_path / "existing.sqlite"
         self._previous_engine_database(path, rows)
         engine = _engine(Lane(LaneName.DERIVE_NATIVE, 1, queue_order=LaneOrder.FIFO))
         engine.url = f"sqlite:///{path}"
-        engine._require_fifo_queues_drained()
+        engine._adopt_fifo_queues()
+        with sqlite3.connect(path) as connection:
+            return connection.execute(
+                "SELECT workflow_uuid, priority FROM workflow_status ORDER BY 1"
+            ).fetchall()
 
     def test_a_previous_engine_schema_with_nothing_queued_is_accepted(self, tmp_path):
-        self._inspect(tmp_path, [])
+        assert self._adopt(tmp_path, []) == []
 
-    def test_work_that_is_settled_or_on_another_lane_is_ignored(self, tmp_path):
-        self._inspect(
-            tmp_path,
-            [
-                ("SUCCESS", LaneName.DERIVE_NATIVE.value, 1000),
-                ("PENDING", "some-other-queue", 1000),
-            ],
+    def test_waiting_work_with_the_previous_rank_is_re_ranked(self, tmp_path):
+        lane = LaneName.DERIVE_NATIVE.value
+
+        ranks = self._adopt(
+            tmp_path, [("ENQUEUED", lane, 1000), ("DELAYED", lane, 1000)]
         )
 
-    def test_neutral_persisted_queue_is_accepted(self, tmp_path):
-        self._inspect(tmp_path, [("ENQUEUED", LaneName.DERIVE_NATIVE.value, 1)])
+        assert ranks == [("w0", 1), ("w1", 1)]
 
-    def test_a_legacy_rank_still_waiting_fails_closed(self, tmp_path):
-        with pytest.raises(RuntimeError, match="derivation_queue_requires_drain"):
-            self._inspect(tmp_path, [("ENQUEUED", LaneName.DERIVE_NATIVE.value, 1000)])
+    def test_work_already_handed_to_a_worker_keeps_its_rank(self, tmp_path):
+        lane = LaneName.DERIVE_NATIVE.value
 
-    def test_more_waiting_work_than_can_be_inspected_fails_closed(self, tmp_path):
-        rows = [("ENQUEUED", LaneName.DERIVE_NATIVE.value, 1)] * 501
+        assert self._adopt(tmp_path, [("PENDING", lane, 1000)]) == [("w0", 1000)]
 
-        with pytest.raises(RuntimeError, match="derivation_queue_requires_drain"):
-            self._inspect(tmp_path, rows)
+    def test_work_that_is_settled_or_on_another_lane_keeps_its_rank(self, tmp_path):
+        rows = [
+            ("SUCCESS", LaneName.DERIVE_NATIVE.value, 1000),
+            ("ENQUEUED", "some-other-queue", 1000),
+        ]
+
+        assert self._adopt(tmp_path, rows) == [("w0", 1000), ("w1", 1000)]
 
     def test_an_unreadable_system_database_fails_closed(self, tmp_path):
         from app.modules.work.contracts import LaneOrder
@@ -393,8 +399,41 @@ class TestFifoStartup:
         engine = _engine(Lane(LaneName.DERIVE_NATIVE, 1, queue_order=LaneOrder.FIFO))
         engine.url = f"sqlite:///{path}"
 
-        with pytest.raises(RuntimeError, match="derivation_queue_requires_drain"):
-            engine._require_fifo_queues_drained()
+        with pytest.raises(RuntimeError, match="derivation_queue_unreadable"):
+            engine._adopt_fifo_queues()
+
+
+class TestLegacySystemDatabase:
+    @staticmethod
+    def _database(tmp_path, tables):
+        import sqlite3
+
+        path = tmp_path / "engine.sqlite"
+        with sqlite3.connect(path) as connection:
+            for table in tables:
+                connection.execute(f"CREATE TABLE {table} (id INTEGER)")
+        engine = _engine()
+        engine.url = f"sqlite:///{path}"
+        return engine
+
+    def test_workflows_without_a_migration_record_are_named_not_crashed_in(
+        self, tmp_path
+    ):
+        engine = self._database(tmp_path, ["workflow_status"])
+
+        with pytest.raises(RuntimeError, match="engine_database_unmigratable"):
+            engine._require_migratable_system_database()
+
+    def test_a_migrated_database_is_accepted(self, tmp_path):
+        engine = self._database(tmp_path, ["workflow_status", "dbos_migrations"])
+
+        engine._require_migratable_system_database()
+
+    def test_a_fresh_database_is_accepted(self, tmp_path):
+        engine = _engine()
+        engine.url = f"sqlite:///{tmp_path / 'absent.sqlite'}"
+
+        engine._require_migratable_system_database()
 
 
 class TestFifoPostgresStartup:
@@ -423,7 +462,7 @@ class TestFifoPostgresStartup:
         monkeypatch.setattr(dbos_engine, "create_engine", create)
         monkeypatch.setattr(dbos_engine, "inspect", lambda value: Inspector())
 
-        engine._require_fifo_queues_drained()
+        engine._adopt_fifo_queues()
 
         assert inspected == ["dbos"]
         assert disposed == [True]
@@ -446,8 +485,8 @@ class TestFifoPostgresStartup:
         )
         monkeypatch.setattr(dbos_engine, "inspect", lambda value: Inspector())
 
-        with pytest.raises(RuntimeError, match="derivation_queue_requires_drain"):
-            engine._require_fifo_queues_drained()
+        with pytest.raises(RuntimeError, match="derivation_queue_unreadable"):
+            engine._adopt_fifo_queues()
 
         assert disposed == [True]
 
