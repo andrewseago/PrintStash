@@ -8,6 +8,12 @@
   to filter. An unfiltered folder still lists only its own Models. Print
   history and Uploaded now look and behave like the other filter groups.
 
+- Library sources can be edited. Each source card has an Edit button to rename
+  it, change how it maps to collections and, for a mounted folder, point it at
+  another folder. A remote source now shows its connection and the bucket or
+  host it reads (for example `R2Test · test/PrintStash/`) instead of the
+  internal `source://1/`.
+
 - Applying a filter no longer rebuilds the collection tree. Its rows stay put,
   the counts dim while they reload, and each count that changes ticks toward
   its new value.

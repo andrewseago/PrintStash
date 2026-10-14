@@ -4346,5 +4346,9 @@
   "gpu.reason.deadline": "Tiempo agotado",
   "gpu.reason.invalid_input": "Entrada no válida",
   "gpu.reason.cancelled": "Cancelado",
-  "gpu.reason.broker_unavailable": "El servicio de cómputo no está en ejecución o aún está arrancando"
+  "gpu.reason.broker_unavailable": "El servicio de cómputo no está en ejecución o aún está arrancando",
+  "Edit source": "Editar origen",
+  "Remote location": "Ubicación remota",
+  "A new folder has to be verified again before it is scanned.": "Una carpeta nueva debe verificarse de nuevo antes de escanearse.",
+  "To change the remote folder, edit its connection in Settings → Remote storage.": "Para cambiar la carpeta remota, edita su conexión en Ajustes → Remote storage."
 }

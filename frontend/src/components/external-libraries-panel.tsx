@@ -1,3 +1,5 @@
+import { EditLibrarySourceModal } from "@/components/edit-library-source-modal";
+import { describeSourceLocation } from "@/lib/library-source-location";
 import { currentLocale } from "@/lib/locale";
 import { uiText } from "@/lib/locale";
 import { useUiLocale } from "@/lib/i18n";
@@ -7,6 +9,7 @@ import {
   CheckCircle2,
   FolderSync,
   HardDrive,
+  Pencil,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -374,6 +377,7 @@ function AdminLibrarySourcesPanel({
   const busyId = command.busyId;
   const enableBusy = configCommand.isPending;
   const [toggleReview, setToggleReview] = useState<SourceToggleReview>({ phase: "idle" });
+  const [editTarget, setEditTarget] = useState<ExternalLibrary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     source: ExternalLibrary;
     session: number;
@@ -835,7 +839,7 @@ function AdminLibrarySourcesPanel({
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground font-mono mt-1 truncate">
-                            {lib.root_path}
+                            {describeSourceLocation(lib, connections)}
                           </p>
                           {(lib.source_kind ?? "mounted") !== "mounted" && (
                             <p className="mt-1 text-2xs text-muted-foreground">
@@ -996,6 +1000,16 @@ function AdminLibrarySourcesPanel({
                                 lib.enabled ? "translate-x-6" : "translate-x-1"
                               }`}
                             />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!commandsAllowed || command.blocked || busyId !== null}
+                            onClick={() => setEditTarget(lib)}
+                            aria-label={uiText("Edit source")}
+                            title={uiText("Edit source")}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -1239,6 +1253,16 @@ function AdminLibrarySourcesPanel({
             confirmLabel={uiText("Enroll root")}
             busy={enrollTarget !== null && busyId === enrollTarget.source.id}
             onConfirm={() => enrollTarget && handleEnroll(enrollTarget)}
+          />
+        )}
+        {editTarget && (
+          <EditLibrarySourceModal
+            key={editTarget.id}
+            source={editTarget}
+            location={describeSourceLocation(editTarget, connections)}
+            disabled={!commandsAllowed || command.blocked || busyId !== null}
+            onSave={(payload) => void handleUpdate(editTarget, payload)}
+            onClose={() => setEditTarget(null)}
           />
         )}
       </div>

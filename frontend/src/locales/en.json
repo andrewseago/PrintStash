@@ -4346,5 +4346,9 @@
   "gpu.reason.deadline": "Timed out",
   "gpu.reason.invalid_input": "Invalid input",
   "gpu.reason.cancelled": "Cancelled",
-  "gpu.reason.broker_unavailable": "The compute service is not running or is still starting"
+  "gpu.reason.broker_unavailable": "The compute service is not running or is still starting",
+  "Edit source": "Edit source",
+  "Remote location": "Remote location",
+  "A new folder has to be verified again before it is scanned.": "A new folder has to be verified again before it is scanned.",
+  "To change the remote folder, edit its connection in Settings → Remote storage.": "To change the remote folder, edit its connection in Settings → Remote storage."
 }
