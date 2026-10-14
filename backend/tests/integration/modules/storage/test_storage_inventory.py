@@ -60,7 +60,7 @@ class TestInventory:
         assert current.external_referenced_bytes == 700
         assert current.unique_owned_bytes == 0
 
-    def test_places_bytes_in_the_vault_and_in_each_library_source(
+    def test_places_bytes_in_the_vault_then_in_each_library_source(
         self,
         db_session,
         make_model,
@@ -124,7 +124,7 @@ class TestInventory:
         assert places["Empty source"].logical_bytes == 0
         assert places["Empty source"].count == 0
 
-    def test_trashed_and_sentinel_files_do_not_count_toward_a_source(
+    def test_trashed_files_do_not_count_toward_a_source(
         self, db_session, make_model, make_file, make_external_library, tmp_path
     ):
         library = make_external_library(tmp_path / "external", name="Trash test")
