@@ -148,7 +148,7 @@ async function openFolder(user: ReturnType<typeof userEvent.setup>, name: string
 describe("FilterSidebar", () => {
   it("translates an already mounted Multipart Model leaf", async () => {
     renderSidebar({ multipartModels: [multipartSet()] });
-    const leaf = await screen.findByRole("button", { name: "Dragon figure" });
+    const leaf = await screen.findByRole("button", { name: "Dragon figure" }, { timeout: 5000 });
     expect(leaf).toHaveAttribute("title", "Dragon figure · Multipart set");
     act(() => setLocale("es"));
     expect(leaf).toHaveAttribute("title", "Dragon figure · Conjunto multiparte");

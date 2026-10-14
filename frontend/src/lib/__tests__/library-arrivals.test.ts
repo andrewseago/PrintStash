@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { arrivingKeys, entryKeys } from "../arrivals";
+import { arrivingKeys, entryKeys } from "../library-arrivals";
 
 describe("entryKeys", () => {
   it("names folders, Models, multipart sets apart", () => {

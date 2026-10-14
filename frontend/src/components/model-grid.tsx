@@ -1,6 +1,6 @@
 "use client";
 
-import { arrivingKeys, entryKeys } from "@/features/library/arrivals";
+import { arrivingKeys, entryKeys } from "@/lib/library-arrivals";
 import {
   FOLDER_CARDS_CLASS,
   FOLDER_MOVE_CLASS,
@@ -1131,7 +1131,8 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
     !modelQuery.refreshRequired &&
     currentRefresh === null &&
     !selectMode &&
-    (snapshot?.modelPages ?? 0) <= 1;
+    (snapshot?.modelPages ?? 0) <= 1 &&
+    (snapshot?.folderPages ?? 0) <= 1;
   const lastSettled = useRef(0);
   // The timer must survive re-renders, so it reads the latest refresh through a
   // ref instead of depending on an object that is new on every render.
