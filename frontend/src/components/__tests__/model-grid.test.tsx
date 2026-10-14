@@ -3206,6 +3206,84 @@ describe("ModelBrowser", () => {
     });
   });
 
+  describe("loading the next page by scrolling", () => {
+    const observers: { callback: IntersectionObserverCallback; disconnected: boolean }[] = [];
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          entry: { callback: IntersectionObserverCallback; disconnected: boolean };
+          constructor(callback: IntersectionObserverCallback) {
+            this.entry = { callback, disconnected: false };
+            observers.push(this.entry);
+          }
+          observe() {}
+          unobserve() {}
+          takeRecords() {
+            return [];
+          }
+          disconnect() {
+            this.entry.disconnected = true;
+          }
+        },
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    function reachTheEnd() {
+      const live = observers.filter((observer) => !observer.disconnected).at(-1);
+      if (!live) throw new Error("no observer is watching the end of the list");
+      // SAFETY: the component reads only `isIntersecting` from an entry, nothing from the observer.
+      const entries = [{ isIntersecting: true }] as IntersectionObserverEntry[];
+      // SAFETY: the callback ignores its second argument, which only a real observer supplies.
+      act(() => live.callback(entries, {} as IntersectionObserver));
+    }
+    function pagedRoutes(rateLimited: () => boolean) {
+      return {
+        "GET /api/v1/models/browse": (url: string) => {
+          const continuation = new URL(url, "http://test").searchParams.has("cursor");
+          if (continuation && rateLimited()) return json({ detail: "rate_limited" }, 429);
+          return json({
+            items: [
+              {
+                kind: "model",
+                model: aModelListItem({
+                  id: continuation ? 902 : 901,
+                  name: continuation ? "Next page" : "First page",
+                }),
+              },
+            ],
+            total: 2,
+            next_cursor: continuation ? null : "next",
+            browse_revision: "r1",
+            authorization_revision: "a1",
+          });
+        },
+      };
+    }
+
+    it("loads the next page when the end comes into view, with no button", async () => {
+      renderVault({ routes: pagedRoutes(() => false) });
+      expect(await screen.findByText("First page")).toBeVisible();
+      expect(screen.queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
+      expect(screen.queryByText("Next page")).not.toBeInTheDocument();
+
+      reachTheEnd();
+
+      expect(await screen.findByText("Next page")).toBeVisible();
+    });
+
+    it("brings the button back after a failed read instead of retrying without end", async () => {
+      renderVault({ routes: pagedRoutes(() => true) });
+      expect(await screen.findByText("First page")).toBeVisible();
+
+      reachTheEnd();
+
+      expect(await screen.findByRole("button", { name: /Load more/ })).toBeVisible();
+    });
+  });
+
   describe("Library authority", () => {
     it("keeps displayed rows until a change settles on its own", async () => {
       const app = renderVault({

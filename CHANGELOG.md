@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The library loads the next page as you scroll, so there is no "Load more"
+  button to press. Loading starts a little before you reach the end, shows a
+  spinner while it reads, and the button only comes back if a read fails or the
+  browser cannot watch scrolling.
+
 - Storage insights now show where your files live: the vault on this computer,
   and each library source with its type and connection, with the total held on
   this computer apart from what sits in remote storage such as R2. Library

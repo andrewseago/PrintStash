@@ -154,6 +154,7 @@ import { ProtectedThumbnail } from "@/components/protected-thumbnail";
 import { useStartupThumbnails } from "@/lib/use-startup-thumbnails";
 import { useThumbnailArrivals } from "@/lib/use-thumbnail-arrivals";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 import { TabBar } from "@/components/ui/tabs";
 
 const loadUploadModal = () =>
@@ -3019,6 +3020,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={snapshot?.moreFolders ?? false}
                     loading={fetchingFolders || currentRefresh !== null}
+                    failed={folderPages.isFetchNextPageError}
                     onClick={() => {
                       if (currentRefresh === null) void fetchMoreFolders();
                     }}
@@ -3027,6 +3029,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={hasMore && !refreshRequired}
                     loading={loadingMore}
+                    failed={modelQuery.isFetchNextPageError}
                     onClick={loadMore}
                   />
                 </div>
@@ -3062,6 +3065,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                     <LoadMore
                       hasMore={snapshot?.moreFolders ?? false}
                       loading={fetchingFolders || currentRefresh !== null}
+                      failed={folderPages.isFetchNextPageError}
                       onClick={() => {
                         if (currentRefresh === null) void fetchMoreFolders();
                       }}
@@ -3093,6 +3097,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={hasMore && !refreshRequired}
                     loading={loadingMore}
+                    failed={modelQuery.isFetchNextPageError}
                     onClick={loadMore}
                   />
                 </div>
@@ -3493,19 +3498,64 @@ function ModelListRow({
   );
 }
 
+/**
+ * The next page of a view loads as the list is scrolled toward its end, so
+ * there is no button to press. A sentinel reaching up 600px above the end of the
+ * list starts the read before the reader gets there. The button remains only
+ * where it must: a browser that cannot observe scrolling, or after a read
+ * failed, since a sentinel still in view would otherwise retry without end.
+ */
 function LoadMore({
   hasMore,
   loading,
+  failed = false,
   onClick,
   folders = false,
 }: {
   hasMore: boolean;
   loading: boolean;
+  failed?: boolean;
   onClick: () => void;
   folders?: boolean;
 }) {
   useUiLocale();
+  const sentinel = useRef<HTMLDivElement>(null);
+  const load = useRef(onClick);
+  useLayoutEffect(() => {
+    load.current = onClick;
+  });
+  const automatic = "IntersectionObserver" in globalThis && !failed;
+  useEffect(() => {
+    const element = sentinel.current;
+    if (!automatic || !hasMore || loading || element === null) return;
+    // Observing reports the current state at once, so a list shorter than the
+    // reach keeps loading until it fills it.
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) load.current();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [automatic, hasMore, loading]);
   if (!hasMore) return null;
+  if (automatic) {
+    return (
+      <Localized>
+        <div className="relative pb-6">
+          <div
+            ref={sentinel}
+            data-load-more-sentinel
+            aria-hidden
+            className="pointer-events-none absolute bottom-0 h-[600px] w-full"
+          />
+          {loading && (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          )}
+        </div>
+      </Localized>
+    );
+  }
   return (
     <Localized>
       <div className="flex justify-center mt-6 pb-6">

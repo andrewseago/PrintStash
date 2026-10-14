@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { scrollToEnd } from "../e2e/_scroll";
 
 declare global {
   interface Window {
@@ -126,9 +127,9 @@ test.describe("instrumented startup resources", () => {
     expect(first.commits).toBeGreaterThan(0);
     expect(first.cpu.ScriptDuration).toBeGreaterThan(0);
     expect(first.blobBytes).toBeGreaterThan(0);
-    while (await page.getByRole("button", { name: /Load more/ }).count()) {
+    while (await page.locator("[data-load-more-sentinel]").count()) {
       const count = await page.locator("main article").count();
-      await page.getByRole("button", { name: /Load more/ }).click();
+      await scrollToEnd(page);
       await expect.poll(() => page.locator("main article").count()).toBeGreaterThan(count);
     }
     await expect(page.locator("main article")).toHaveCount(90);

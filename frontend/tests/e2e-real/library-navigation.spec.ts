@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { test, expect } from "./helpers";
+import { scrollToEnd } from "../e2e/_scroll";
 import { modelCard, uploadGcodeModel } from "./util";
 
 test.describe("Library navigation", () => {
@@ -67,7 +68,7 @@ test.describe("Library navigation", () => {
         const entries = page.locator("main [data-library-entry]");
         await expect(entries.first()).toBeVisible();
         const firstPageCount = await entries.count();
-        await page.getByRole("button", { name: "Load more", exact: true }).click();
+        await scrollToEnd(page);
         await expect.poll(() => entries.count()).toBeGreaterThan(firstPageCount + 10);
         const target = entries.nth(firstPageCount + 10);
         const targetHref = await target.getAttribute("data-library-entry");

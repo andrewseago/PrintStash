@@ -1,6 +1,7 @@
 /** Library detail return belongs to the exact displayed history entry. */
 import { expect, test } from "@playwright/test";
 import { useMockApi } from "./_setup";
+import { scrollToEnd } from "./_scroll";
 import { aModel, aModelListItem, aMultipartModel } from "../../src/test-support/factories";
 
 useMockApi();
@@ -142,7 +143,7 @@ test.describe("Library navigation", () => {
         });
       });
       await page.goto("/?c=maraio&type=all&sort=name-asc");
-      await page.getByRole("button", { name: "Load more", exact: true }).click();
+      await scrollToEnd(page);
       const link = page
         .getByRole("main")
         .getByRole("link", { name: /skadis_kitchen-roll_screw/ })
@@ -302,7 +303,7 @@ test.describe("Library navigation", () => {
         });
       });
       await page.goto("/?c=maraio&type=all&sort=name-asc");
-      await page.getByRole("button", { name: "Load more", exact: true }).click();
+      await scrollToEnd(page);
       await page
         .getByRole("main")
         .getByRole("link", { name: /Second 10/ })
