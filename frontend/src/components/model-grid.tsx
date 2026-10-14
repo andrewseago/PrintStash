@@ -1012,15 +1012,20 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   if (nextSnapshot !== null && nextSnapshot !== settledSnapshot) setSettledSnapshot(nextSnapshot);
   const snapshot = currentRefresh?.status === "denied" ? null : (nextSnapshot ?? settledSnapshot);
   const displayedCollection = snapshot?.collection ?? null;
-  const displayedPath = displayedCollection?.path ?? "";
-  const [folderEntrance, setFolderEntrance] = useState<{ path: string; className: string }>({
+  // `null` until the first snapshot lands: opening a folder by URL is arriving,
+  // not moving, so the first settled folder must not animate.
+  const displayedPath = snapshot === null ? null : (displayedCollection?.path ?? "");
+  const [folderEntrance, setFolderEntrance] = useState<{ path: string | null; className: string }>({
     path: displayedPath,
     className: "",
   });
-  if (folderEntrance.path !== displayedPath) {
+  if (displayedPath !== null && folderEntrance.path !== displayedPath) {
     setFolderEntrance({
       path: displayedPath,
-      className: FOLDER_MOVE_CLASS[folderMove(folderEntrance.path, displayedPath)],
+      className:
+        folderEntrance.path === null
+          ? ""
+          : FOLDER_MOVE_CLASS[folderMove(folderEntrance.path, displayedPath)],
     });
   }
   const onAuthorityRetired = useCallback(() => {
@@ -2874,7 +2879,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                 />
               ) : viewMode === "grid" ? (
                 <div
-                  key={`grid:${folderEntrance.path}`}
+                  key={`grid:${folderEntrance.path ?? ""}`}
                   className={`${folderEntrance.className} ${compact ? "p-3" : "p-4 sm:p-6"}`}
                 >
                   <div
@@ -2935,7 +2940,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                 </div>
               ) : (
                 <div
-                  key={`list:${folderEntrance.path}`}
+                  key={`list:${folderEntrance.path ?? ""}`}
                   ref={listContent}
                   className={`${folderEntrance.className} flex-1 overflow-y-auto`}
                 >

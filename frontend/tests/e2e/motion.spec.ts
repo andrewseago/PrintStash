@@ -132,6 +132,13 @@ test.describe("motion and layering", () => {
     });
   }
 
+  test("opening a folder by its URL does not animate its content", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/?c=maraio");
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+    await expect(page.locator(".folder-in-forward, .folder-in-back, .fade-in")).toHaveCount(0);
+  });
+
   test("climbing back out of a folder settles its parent in from the left", async ({ page }) => {
     await folderWithDescription(page);
     await page.goto("/");
