@@ -149,17 +149,33 @@ import { useThumbnailArrivals } from "@/lib/use-thumbnail-arrivals";
 import { cn } from "@/lib/utils";
 import { TabBar } from "@/components/ui/tabs";
 
-const UploadModal = lazyImport(() =>
-  import("@/components/upload-modal").then((module) => ({ default: module.UploadModal })),
-);
-const ModelTagsDialog = lazyImport(() =>
-  import("@/components/model-tags-dialog").then((module) => ({ default: module.ModelTagsDialog })),
-);
-const NewMultipartModelModal = lazyImport(() =>
+const loadUploadModal = () =>
+  import("@/components/upload-modal").then((module) => ({ default: module.UploadModal }));
+const loadModelTagsDialog = () =>
+  import("@/components/model-tags-dialog").then((module) => ({ default: module.ModelTagsDialog }));
+const loadNewMultipartModelModal = () =>
   import("@/components/new-multipart-model-modal").then((module) => ({
     default: module.NewMultipartModelModal,
-  })),
-);
+  }));
+const UploadModal = lazyImport(loadUploadModal);
+const ModelTagsDialog = lazyImport(loadModelTagsDialog);
+const NewMultipartModelModal = lazyImport(loadNewMultipartModelModal);
+
+/** Fetch the dialog chunks once the library is usable, so the first click opens
+ *  a dialog instead of an empty frame while its code downloads. */
+function useDialogPreload(ready: boolean) {
+  useEffect(() => {
+    if (!ready) return;
+    const load = () => {
+      // A failed warm-up changes nothing: opening the dialog retries the import.
+      for (const loader of [loadModelTagsDialog, loadUploadModal, loadNewMultipartModelModal])
+        void loader().catch(() => undefined);
+    };
+    // Late enough not to compete with the first thumbnails, early enough to be warm.
+    const handle = setTimeout(load, 1500);
+    return () => clearTimeout(handle);
+  }, [ready]);
+}
 
 type SortKey = ModelSort;
 type ViewMode = "grid" | "list";
@@ -1677,6 +1693,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
     startup.complete && browseReady && !refreshing,
   );
   const warmModel = useModelOpenIntent(startup.complete && browseReady && !refreshing);
+  useDialogPreload(startup.complete && browseReady);
   const canAdminSelectedCollection =
     user?.is_superuser || selectedCollectionRow?.effective_role === "admin";
   // Whether there is anywhere this reader may upload to, without listing it.
