@@ -4,7 +4,12 @@
  * malformed bookmarks cannot invent constraints or leak printer-only state.
  */
 import { describe, expect, it } from "vitest";
-import { readLibraryFilters, writeLibraryFilters, sameLibraryFilters } from "../filters";
+import {
+  narrowsLibrary,
+  readLibraryFilters,
+  writeLibraryFilters,
+  sameLibraryFilters,
+} from "../filters";
 import { readLibraryLocation } from "../url";
 import type { SavedViewFilters } from "@/types";
 
@@ -203,5 +208,23 @@ describe("Library filter projection", () => {
       "v=docs&upload=1&unknown=keep&sort=name-asc&type=multipart",
     );
     expect(state.filters).toMatchObject({ library_view: "multipart", sort: "name-asc" });
+  });
+});
+
+describe("narrowsLibrary", () => {
+  it("is false for an unfiltered folder or one that only has a text query", () => {
+    expect(narrowsLibrary(read("c=maraio").baseFilters)).toBe(false);
+    expect(narrowsLibrary(read("c=maraio&q=vase").baseFilters)).toBe(false);
+  });
+
+  it.each([
+    ["a file type", "file_type=stl"],
+    ["a tag", "tag=functional"],
+    ["favorites", "favorites=true"],
+    ["printed = no", "printed=no"],
+    ["an upload date", "uploaded_after=2026-01-01"],
+    ["a storage source", "storage=vault"],
+  ])("is true with %s, so the filter spans the subtree", (_name, query) => {
+    expect(narrowsLibrary(read(`c=maraio&${query}`).baseFilters)).toBe(true);
   });
 });

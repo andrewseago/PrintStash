@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Filters work in a folder that only holds folders.** The filter options and
+  their counts now describe the whole folder tree below you, and applying a
+  filter searches that tree, so the root of a library no longer offers nothing
+  to filter. An unfiltered folder still lists only its own Models. Print
+  history and Uploaded now look and behave like the other filter groups.
+
+- Starring a Model, or regenerating covers, no longer shows "The library has
+  changed" on every open library. Only edits that can change a listing do.
+  Reloading reopens the path to the open folder and the six folders you opened
+  last, not every folder of the session.
+
+- Cards now ease in one after another when you open a folder, even when
+  everything is already cached.
+
 - **Settings → GPU shows what the server can reach.** Administrators get a
   Server GPU card saying whether a GPU is accessible from the API, with its
   device, backend, driver, memory budget, capabilities and recent activity, or

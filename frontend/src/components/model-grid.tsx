@@ -38,6 +38,7 @@ import {
   readLibraryFilters,
   writeLibraryFilters,
   effectiveLibraryView,
+  narrowsLibrary,
   sameLibraryFilters,
   structuredLibraryFilterKeys as STRUCTURED_FILTER_KEYS,
   type StructuredLibraryFilterKey as StructuredFilterKey,
@@ -860,12 +861,18 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   ): ModelListFilters => ({
     ...baseFilters,
     collection: collection ?? undefined,
-    // A search spans the whole library; a folder view lists only its direct
-    // children so subfolders' models don't leak into the parent (#30).
-    direct: !searchQuery,
+    // A search or a filter spans the whole subtree; an unfiltered folder view
+    // lists only its direct children so subfolders' models don't leak into
+    // the parent (#30).
+    direct: !searchQuery && !narrowsLibrary(baseFilters),
     q: searchQuery,
   });
-  const facetQuery = useModelFacets(folderModelFilters(), { enabled: filtersEnabled });
+  // Options and counts describe the whole subtree, so a folder that holds only
+  // subfolders still offers every filter that would match inside it.
+  const facetQuery = useModelFacets(
+    { ...folderModelFilters(), direct: false },
+    { enabled: filtersEnabled },
+  );
 
   function writeFilterUrl(filters: SavedViewRead["filters"]) {
     const params = writeLibraryFilters(filters, canViewPrinters);
