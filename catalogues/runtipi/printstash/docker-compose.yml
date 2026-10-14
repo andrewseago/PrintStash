@@ -13,6 +13,12 @@ services:
       - VAULT_SETUP_ADMIN_USERNAME=${PRINTSTASH_ADMIN_USERNAME}
       - VAULT_SETUP_ADMIN_PASSWORD=${PRINTSTASH_ADMIN_PASSWORD}
       - VAULT_SETUP_ADMIN_EMAIL=${PRINTSTASH_ADMIN_EMAIL}
+      # GPU use and memory budgets (docs/compute.md). A GPU is used when the
+      # container can see one; otherwise the CPU does the work.
+      - VAULT_COMPUTE_MODE=auto
+      - VAULT_COMPUTE_MEMORY_MB=1024
+      - VAULT_MESH_MEMORY_BUDGET_FRACTION=0.5
+      - VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION=0.25
     volumes:
       - ${APP_DATA_DIR}/data:/data
     x-runtipi:

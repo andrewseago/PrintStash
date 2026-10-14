@@ -27,3 +27,9 @@ services:
       # The credentials Umbrel shows on the app's page (umbrel-app.yml).
       VAULT_SETUP_ADMIN_USERNAME: admin
       VAULT_SETUP_ADMIN_PASSWORD: ${APP_PASSWORD}
+      # GPU use and memory budgets. A GPU is used when the container can see
+      # one (docs/compute.md); otherwise the CPU does the work.
+      VAULT_COMPUTE_MODE: auto
+      VAULT_COMPUTE_MEMORY_MB: "1024"
+      VAULT_MESH_MEMORY_BUDGET_FRACTION: "0.5"
+      VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION: "0.25"

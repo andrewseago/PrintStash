@@ -144,6 +144,60 @@ class TestPrintStashTemplate:
         assert _template().findtext("ExtraParams") == "--restart=unless-stopped"
 
 
+class TestPrintStashTemplateGpu:
+    def test_offers_the_render_device_without_a_default(self) -> None:
+        (device,) = _configs("Device")
+
+        assert device.get("Target") == "/dev/dri"
+        assert (device.get("Default"), device.get("Required")) == ("", "false"), (
+            "a default device would stop the container on hosts without a GPU"
+        )
+
+    def test_keeps_the_nvidia_runtime_out_of_the_default_parameters(self) -> None:
+        # --runtime=nvidia fails on a host without the Nvidia Driver plugin.
+        assert "nvidia" not in _template().findtext("ExtraParams", "")
+        assert "--runtime=nvidia" in _configs("Device")[0].get("Description", "")
+
+    def test_defaults_the_nvidia_capabilities_to_all(self) -> None:
+        assert _variables()["NVIDIA_DRIVER_CAPABILITIES"].text == "all"
+
+    @pytest.mark.parametrize(
+        ("target", "default"),
+        [
+            ("VAULT_COMPUTE_MODE", "auto"),
+            ("VAULT_COMPUTE_RENDER_POLICY", "qualified"),
+            ("VAULT_COMPUTE_MEMORY_MB", "1024"),
+            ("VAULT_MESH_MEMORY_BUDGET_FRACTION", "0.5"),
+            ("VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION", "0.25"),
+        ],
+        ids=str,
+    )
+    def test_ships_the_documented_compute_defaults(
+        self, target: str, default: str
+    ) -> None:
+        field = _variables()[target]
+
+        assert (field.text, field.get("Display")) == (default, "advanced")
+
+    def test_ships_memory_defaults_the_settings_accept(self) -> None:
+        from app.core.config import Settings
+
+        variables = _variables()
+        settings = Settings(
+            compute_mode=variables["VAULT_COMPUTE_MODE"].text,
+            compute_render_policy=variables["VAULT_COMPUTE_RENDER_POLICY"].text,
+            compute_memory_mb=int(variables["VAULT_COMPUTE_MEMORY_MB"].text or 0),
+            mesh_memory_budget_fraction=float(
+                variables["VAULT_MESH_MEMORY_BUDGET_FRACTION"].text or 0
+            ),
+            embedding_memory_budget_fraction=float(
+                variables["VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION"].text or 0
+            ),
+        )
+
+        assert settings.compute_memory_mb == 1024
+
+
 class TestCommunityApplicationsProfile:
     def test_community_applications_profile_describes_one_container(self) -> None:
         profile = ElementTree.parse(REPO_ROOT / "ca_profile.xml").getroot()

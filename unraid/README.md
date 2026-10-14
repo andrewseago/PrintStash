@@ -168,6 +168,24 @@ not visible unless it is also mounted inside the container.
 The default [Compose file](../docker-compose.yml) is an alternative for
 Docker Compose Manager. It uses the same image and first-run settings.
 
+## GPU and memory budgets
+
+There is one PrintStash image for every server. It uses a GPU when the
+container can see one and runs on the CPU otherwise, so nothing changes unless
+you hand it a device. Open the container's **Advanced View** and set:
+
+| Setting | Use |
+| --- | --- |
+| **GPU: Intel or AMD render device** | Enter `/dev/dri` to pass the host's render device. Leave it empty for CPU only. |
+| NVIDIA | Install the Nvidia Driver plugin, add `--runtime=nvidia` to **Extra Parameters** (after `--restart=unless-stopped`), and set **GPU: NVIDIA visible devices** to the GPU's UUID or `all`. |
+| **GPU use** (`VAULT_COMPUTE_MODE`) | `auto` uses a visible GPU; `cpu` never does. |
+| **GPU render policy** | `qualified` places work on the GPU only where a measured receipt exists; `preview` lets you try it. |
+| **GPU memory budget (MiB)** | The most GPU memory PrintStash may plan to use (256 to 65536, default 1024). |
+| **System memory budget** | Share of the server's RAM for thumbnail and geometry work (default 0.5) and for resident AI search models (default 0.25). Lower them on a server that runs many containers. |
+
+**Settings, GPU** in PrintStash shows what it found. See
+[GPU and compute](../docs/compute.md) for the details.
+
 ## Uploads on `/mnt/user`
 
 Unraid's `/mnt/user` shares pass through SHFS/FUSE. With hard-link support
