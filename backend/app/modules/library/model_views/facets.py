@@ -26,8 +26,40 @@ from app.schemas.models import (
 
 from .filters import _filtered_stmt, print_job_predicates
 
+# Facet dimensions that are also filters of the same name. Selecting a value in
+# one must not hide its siblings: the user adds values to a group to widen it.
+DISJUNCTIVE_FACETS = (
+    "file_type",
+    "material_type",
+    "slicer_name",
+    "printer_model",
+    "revision_status",
+    "print_outcome",
+    "storage",
+    "printed",
+)
+
 
 def facets(session: Session, user: User, filters: ModelFilters) -> ModelFacetsRead:
+    """Facet values where each filtered group is counted without its own filter.
+
+    Every other filter still applies, so the numbers say what a click would
+    add; a group's own selection is what it is widening. Only a group with a
+    selection costs an extra read.
+    """
+    result = _facets(session, user, filters)
+    for dimension in DISJUNCTIVE_FACETS:
+        selected = getattr(filters, dimension)
+        if selected is None or selected == []:
+            continue
+        cleared = filters.model_copy(
+            update={dimension: None if dimension == "printed" else []}
+        )
+        setattr(result, dimension, getattr(_facets(session, user, cleared), dimension))
+    return result
+
+
+def _facets(session: Session, user: User, filters: ModelFilters) -> ModelFacetsRead:
     """Accessible live facet values in one database round-trip.
 
     The union keeps each dimension independently grouped while avoiding the
