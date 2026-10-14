@@ -4385,5 +4385,8 @@
   "component_unavailable": "The source file could not be read. Check that its storage is reachable.",
   "invalid_source": "The source file could not be read. Check that its storage is reachable.",
   "Listing the remote source · {found} files found · {where} · continues in background": "Listing the remote source · {found} files found · {where} · continues in background",
-  "discovering": "discovering"
+  "discovering": "discovering",
+  "Preparing previews": "Preparing previews",
+  "{count} left · continues in background": "{count} left · continues in background",
+  "Previews are ready": "Previews are ready"
 }

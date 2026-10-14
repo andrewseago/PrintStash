@@ -103,6 +103,8 @@ export interface TaskItem {
   archiveTransferredBytes?: number;
   archiveSpeedBytesPerSecond?: number;
   archiveEtaSeconds?: number;
+  /** Mirrors work the server does by itself; never kept across a reload. */
+  ambient?: boolean;
 }
 
 export function needsArchiveReview(task: TaskItem): boolean {
@@ -212,7 +214,9 @@ function loadTasks(): TaskItem[] {
     // snapshot; a hand-edited or truncated value falls through to the catch.
     if (!ownsPersistedTasks()) return [];
     const parsed: TaskItem[] | null = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    return Array.isArray(parsed) ? keepVisibleTasks(parsed).map(recoverTaskAfterReload) : [];
+    return Array.isArray(parsed)
+      ? keepVisibleTasks(parsed.filter((task) => !task.ambient)).map(recoverTaskAfterReload)
+      : [];
   } catch {
     return [];
   }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Thumbnail and 3D-view generation now shows in Tasks. After an import or a scan,
+  administrators see one "Preparing previews" task counting what is left, which
+  completes when the queue empties instead of the work being invisible.
+
 - The library no longer asks you to refresh when it changes. In a view that is a
   single page, a new Model or folder eases in where it belongs and a change in
   another folder only updates the counts; the notice remains only deeper in a

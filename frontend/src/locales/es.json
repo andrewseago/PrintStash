@@ -4385,5 +4385,8 @@
   "component_unavailable": "No se pudo leer el archivo de origen. Comprueba que su almacenamiento es accesible.",
   "invalid_source": "No se pudo leer el archivo de origen. Comprueba que su almacenamiento es accesible.",
   "Listing the remote source · {found} files found · {where} · continues in background": "Listando el origen remoto · {found} archivos encontrados · {where} · continúa en segundo plano",
-  "discovering": "listando"
+  "discovering": "listando",
+  "Preparing previews": "Preparando vistas previas",
+  "{count} left · continues in background": "Quedan {count} · continúa en segundo plano",
+  "Previews are ready": "Las vistas previas están listas"
 }
