@@ -6,7 +6,7 @@ from alembic.migration import MigrationContext
 from alembic.operations.ops import UpgradeOps
 from sqlalchemy import create_engine, text
 
-from app.db import library_authorization_v2
+from app.db import library_authorization_v2, library_browse_v2
 from app.db.library_contracts_autogen import compare_library_contracts
 
 
@@ -14,11 +14,22 @@ class TestCompareLibraryContracts:
     @pytest.mark.parametrize(
         "installed,expected",
         [
-            ((), [("library_contracts_v1", True), ("library_authorization_v2", True)]),
-            (("v1",), [("library_authorization_v2", True)]),
-            (("v1", "v2"), []),
+            (
+                (),
+                [
+                    ("library_contracts_v1", True),
+                    ("library_authorization_v2", True),
+                    ("library_browse_v2", True),
+                ],
+            ),
+            (
+                ("v1",),
+                [("library_authorization_v2", True), ("library_browse_v2", True)],
+            ),
+            (("v1", "v2"), [("library_browse_v2", True)]),
+            (("v1", "v2", "browse"), []),
         ],
-        ids=["absent", "v1-only", "installed"],
+        ids=["absent", "v1-only", "authorization-only", "installed"],
     )
     def test_generates_only_the_absent_contracts(
         self, installed: tuple[str, ...], expected: list
@@ -34,6 +45,13 @@ class TestCompareLibraryContracts:
                     connection.execute(
                         text(
                             f"CREATE TRIGGER {library_authorization_v2.MARKER} "
+                            "AFTER DELETE ON library_revision BEGIN SELECT 1; END"
+                        )
+                    )
+                if "browse" in installed:
+                    connection.execute(
+                        text(
+                            f"CREATE TRIGGER {library_browse_v2.MARKER} "
                             "AFTER DELETE ON library_revision BEGIN SELECT 1; END"
                         )
                     )
