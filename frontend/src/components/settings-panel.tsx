@@ -4368,7 +4368,7 @@ export function SettingsPanel() {
               <div className="space-y-6 animate-panel-in">
                 {user?.is_superuser && (
                   <SettingsCard
-                    icon={Server}
+                    icon={Gpu}
                     title={t("gpu.server.title")}
                     description={t("gpu.server.description")}
                     action={

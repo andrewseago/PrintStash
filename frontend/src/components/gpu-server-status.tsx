@@ -11,7 +11,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   return (
     <div className="min-w-0 space-y-0.5">
       <dt className="font-mono text-3xs uppercase tracking-wider text-muted-foreground">{label}</dt>
-      <dd className="truncate text-sm">{children}</dd>
+      <dd className="break-words text-sm">{children}</dd>
     </div>
   );
 }
