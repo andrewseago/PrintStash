@@ -50,6 +50,21 @@ export interface StorageInventory {
     status: string;
     method: string;
   }[];
+  /** The vault first, then each library source read in place. */
+  locations: StorageLocation[];
+}
+
+export interface StorageLocation {
+  kind: "vault" | "library";
+  label: string;
+  /** `local`, `s3`… for the vault; `mounted`, `s3`, `webdav` or `sftp` for a source. */
+  transport: string;
+  remote: boolean;
+  library_id: number | null;
+  connection: string | null;
+  count: number;
+  logical_bytes: number;
+  unknown_size_count: number;
 }
 
 export interface StorageInventoryReport {

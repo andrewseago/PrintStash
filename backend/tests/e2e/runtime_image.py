@@ -1,6 +1,6 @@
 """Storage contracts against an already built, unmodified runtime image.
 
-Run through ``scripts/test.sh image --image TAG --variant full|lite|gpu|gpu-render``. This is
+Run through ``scripts/test.sh image --image TAG --variant full|lite``. This is
 the image-build lane: unlike ASGI tests, every application dependency comes
 from the final image. The host only supplies HTTP and container test clients.
 """
@@ -317,6 +317,47 @@ class TestFullImageTransports(unittest.TestCase):
         )
 
 
+class TestFullImageGpuRuntime(unittest.TestCase):
+    """The one published image carries the GPU runtime and needs no device."""
+
+    def test_ships_the_gpu_runtime_and_stays_on_the_cpu_without_a_device(self) -> None:
+        probe = """
+import importlib.metadata as metadata, json
+import onnxruntime, wgpu
+from app.runtime.compute.client import status
+state = status(start=False)
+print(json.dumps({
+    "wgpu": metadata.version("wgpu"),
+    "webgpu_provider": metadata.version("onnxruntime-ep-webgpu"),
+    "device": state.device is not None,
+    "placed": [c.operation.value for c in state.capabilities if c.available],
+}))
+"""
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-i",
+                "--entrypoint",
+                "/app/.venv/bin/python",
+                IMAGE,
+                "-",
+            ],
+            input=probe,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=True,
+        )
+        report = json.loads(result.stdout.splitlines()[-1])
+
+        self.assertTrue(report["wgpu"])
+        self.assertTrue(report["webgpu_provider"])
+        self.assertFalse(report["device"])
+        self.assertEqual(report["placed"], [])
+
+
 class TestLiteImageTransports(unittest.TestCase):
     def test_reports_unavailable_image_capabilities(self) -> None:
         result = _probe()
@@ -526,14 +567,14 @@ def main() -> int:
     global IMAGE, VARIANT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
-    parser.add_argument("--variant", required=True, choices=("full", "lite", "gpu", "gpu-render"))
+    parser.add_argument("--variant", required=True, choices=("full", "lite"))
     arguments = parser.parse_args()
     IMAGE, VARIANT = arguments.image, arguments.variant
     classes = (
         TestRuntimeImageEntrypoint,
         *(
             (TestFullImageTransports, TestRuntimeImageBackup)
-            if VARIANT in {"full", "gpu", "gpu-render"}
+            if VARIANT == "full"
             else (TestLiteImageTransports,)
         ),
     )

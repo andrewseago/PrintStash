@@ -95,7 +95,7 @@ describe("taxonomy commands", () => {
     expect(app.client.getQueryState(queryKeys.tags)?.isInvalidated).toBe(false);
     expect(app.client.getQueryData(queryKeys.tags)).toEqual([aTag({ name: "Replacement" })]);
   });
-  it.each(["create", "move", "rename", "delete", "tags", "readme"] as const)(
+  it.each(["create", "move", "rename", "delete", "tags"] as const)(
     "revalidates collection projections after %s",
     async (kind) => {
       function CollectionEditor() {
@@ -113,9 +113,7 @@ describe("taxonomy commands", () => {
                       ? commands.renameCollection(7, "New")
                       : kind === "delete"
                         ? commands.deleteCollection(7)
-                        : kind === "tags"
-                          ? commands.replaceCollectionTags(7, ["New"])
-                          : commands.setCollectionReadme(7, "New");
+                        : commands.replaceCollectionTags(7, ["New"]);
               void work.then(() => setDone(true));
             }}
           >
@@ -144,4 +142,32 @@ describe("taxonomy commands", () => {
       for (const key of keys) expect(app.client.getQueryState(key)?.isInvalidated).toBe(true);
     },
   );
+  it("saves a description without reloading the outliner or the library", async () => {
+    function ReadmeEditor() {
+      const commands = useTaxonomyCommands();
+      const [done, setDone] = useState(false);
+      return (
+        <button
+          onClick={() => void commands.setCollectionReadme(7, "New").then(() => setDone(true))}
+        >
+          {done ? "saved" : "Save"}
+        </button>
+      );
+    }
+    const others = [queryKeys.models, queryKeys.multipartModels, queryKeys.vaultStats];
+    const rows = [{ id: 1 }];
+    const app = renderApp(<ReadmeEditor />, {
+      seed: [
+        [queryKeys.collections, []],
+        [queryKeys.outliner, rows],
+        ...others.map((key): [readonly unknown[], unknown] => [key, []]),
+      ],
+      routes: { "PUT /api/v1/collections/7/readme": json({ readme: "New" }) },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("saved");
+    expect(app.client.getQueryState(queryKeys.collections)?.isInvalidated).toBe(true);
+    for (const key of others) expect(app.client.getQueryState(key)?.isInvalidated).toBe(false);
+    expect(app.client.getQueryData(queryKeys.outliner)).toBe(rows);
+  });
 });

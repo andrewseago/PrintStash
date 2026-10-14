@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from app.modules.sources.library_source import RemoteLibrarySource
+from app.modules.sources.remote_discovery import progress_reporter, report_progress
 from app.modules.storage.remote_io_adapters import remote_io_for
 from app.modules.storage.storage_providers import TransportKind, TransportSpec
 
@@ -43,6 +44,49 @@ def _source(operator):
             operator=operator,
         )
     )
+
+
+class _TreeOperator:
+    """A root with one file and one subfolder that holds another file."""
+
+    def list(self, directory):
+        if directory == "models/":
+            yield SimpleNamespace(
+                path="models/sub/",
+                metadata=SimpleNamespace(content_length=0, is_dir=True),
+            )
+            yield SimpleNamespace(
+                path="models/root.gcode",
+                metadata=SimpleNamespace(content_length=10, is_dir=False),
+            )
+        else:
+            yield SimpleNamespace(
+                path="models/sub/inner.gcode",
+                metadata=SimpleNamespace(content_length=10, is_dir=False),
+            )
+
+
+class TestListingProgress:
+    def test_each_listed_folder_reports_what_has_been_found_so_far(self, db_session):
+        seen = []
+        with report_progress(
+            lambda found, listed, folder: seen.append((found, listed, folder))
+        ):
+            _source(_TreeOperator()).list_page("models", cursor=None, limit=1000)
+
+        assert seen == [(1, 1, "models"), (2, 2, "models/sub")]
+
+    def test_listing_without_a_reporter_is_silent(self, db_session):
+        page = _source(_TreeOperator()).list_page("models", cursor=None, limit=1000)
+
+        assert page.complete is True
+        assert progress_reporter() is None
+
+    def test_the_reporter_does_not_outlive_its_block(self, db_session):
+        with report_progress(lambda *_: None):
+            assert progress_reporter() is not None
+
+        assert progress_reporter() is None
 
 
 class TestDurableDirectoryInventory:

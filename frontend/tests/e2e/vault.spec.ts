@@ -16,6 +16,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { useMockApi } from "./_setup";
+import { scrollToEnd } from "./_scroll";
 import { aModel, aModelListItem, aMultipartModel } from "../../src/test-support/factories";
 
 useMockApi();
@@ -44,7 +45,6 @@ test.describe("vault route", () => {
     await page.getByRole("button", { name: "Library tools" }).click();
     await page.getByRole("button", { name: "Select", exact: true }).click();
     await page.getByRole("checkbox", { name: "Select Selection 2", exact: true }).click();
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
 
     await page.locator('main [data-library-entry="/models/103"]').click({ modifiers: ["Shift"] });
 
@@ -105,7 +105,7 @@ test.describe("vault route", () => {
     expect(writes).toBe(1);
   });
 
-  test("refreshes a changed library deliberately", async ({ page }) => {
+  test("applies a change to a single-page library by itself", async ({ page }) => {
     const browseRequests: string[] = [];
     let changed = false;
     await page.route("**/api/v1/models/browse/revision", (route) =>
@@ -127,7 +127,7 @@ test.describe("vault route", () => {
             },
           ],
           total: changed ? 1 : 2,
-          next_cursor: changed ? null : "old",
+          next_cursor: null,
           browse_revision: changed ? "r2" : "r1",
           authorization_revision: "a1",
         },
@@ -135,7 +135,6 @@ test.describe("vault route", () => {
     });
     await page.goto("/");
     await expect(page.getByText("Original bracket", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Load more", exact: true })).toBeVisible();
     const initialReads = browseRequests.length;
     changed = true;
     const authorityRead = page.waitForResponse(
@@ -145,19 +144,53 @@ test.describe("vault route", () => {
       document.dispatchEvent(new Event("visibilitychange", { bubbles: true })),
     );
     await authorityRead;
-    await expect(
-      page.getByText("The library has changed. Refresh before loading more results."),
-    ).toBeVisible();
-    await expect(page.getByText("Original bracket", { exact: true })).toBeVisible();
-    expect(browseRequests).toHaveLength(initialReads);
-    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Refresh library" }).click();
 
     await expect(page.getByText("Current bracket", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("The library has changed. Refresh before loading more results."),
+    ).toHaveCount(0);
     await expect(page.getByText("Original bracket", { exact: true })).toHaveCount(0);
     expect(browseRequests).toHaveLength(initialReads + 1);
     expect(browseRequests.every((url) => !new URL(url).searchParams.has("cursor"))).toBe(true);
+  });
+
+  test("a Model added to the open view eases in while the others stay put", async ({ page }) => {
+    let changed = false;
+    const existing = aModelListItem({ id: 1, name: "Existing bracket", thumbnail_url: null });
+    const added = aModelListItem({ id: 2, name: "Added bracket", thumbnail_url: null });
+    await page.route("**/api/v1/models/browse/revision", (route) =>
+      route.fulfill({
+        json: { browse_revision: changed ? "r2" : "r1", authorization_revision: "a1" },
+      }),
+    );
+    await page.route("**/api/v1/models/browse?**", (route) =>
+      route.fulfill({
+        json: {
+          items: (changed ? [added, existing] : [existing]).map((model) => ({
+            kind: "model",
+            model,
+          })),
+          total: changed ? 2 : 1,
+          next_cursor: null,
+          browse_revision: changed ? "r2" : "r1",
+          authorization_revision: "a1",
+        },
+      }),
+    );
+    await page.goto("/");
+    await expect(page.getByText("Existing bracket", { exact: true })).toBeVisible();
+    changed = true;
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true })),
+    );
+
+    const arrival = page.locator("article", { hasText: "Added bracket" });
+    await expect(arrival).toBeVisible();
+    expect(await arrival.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+      "card-arrive",
+    );
+    const settled = page.locator("article", { hasText: "Existing bracket" });
+    expect(await settled.evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
   });
 
   test("reports a conflicting batch undo", async ({ page }) => {
@@ -246,6 +279,39 @@ test.describe("vault route", () => {
     await expect(page.getByText("Favorite bracket", { exact: true })).toHaveCount(0);
   });
 
+  test("the next page loads as the list is scrolled, with no button to press", async ({ page }) => {
+    const pages = [0, 1].map((index) =>
+      Array.from({ length: 30 }, (_, row) =>
+        aModelListItem({ id: 1000 + index * 30 + row, name: `Paged ${index * 30 + row}` }),
+      ),
+    );
+    const cursors: (string | null)[] = [];
+    await page.route("**/api/v1/models/browse?**", (route) => {
+      const cursor = new URL(route.request().url()).searchParams.get("cursor");
+      cursors.push(cursor);
+      return route.fulfill({
+        json: {
+          items: pages[cursor ? 1 : 0].map((model) => ({ kind: "model", model })),
+          total: 60,
+          next_cursor: cursor ? null : "second",
+          browse_revision: "r1",
+          authorization_revision: "a1",
+        },
+      });
+    });
+    await page.goto("/?type=all&sort=name-asc");
+    const cards = page.getByRole("main").locator("article");
+    await expect(cards.first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+    expect(cursors).not.toContain("second");
+
+    await scrollToEnd(page);
+
+    await expect(cards).toHaveCount(60);
+    expect(cursors.filter((cursor) => cursor === "second")).toHaveLength(1);
+    await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  });
+
   test("preserves mixed order through browser pagination", async ({ page }) => {
     await page.route("**/api/v1/models/browse?**", async (route) => {
       const continued = new URL(route.request().url()).searchParams.has("cursor");
@@ -268,8 +334,6 @@ test.describe("vault route", () => {
     });
     await page.goto("/?type=all&sort=name-asc");
     await expect(page.getByRole("link", { name: /Zeta/ })).toBeVisible();
-
-    await page.getByRole("button", { name: "Load more" }).click();
 
     const cards = page
       .getByRole("main")
@@ -301,8 +365,6 @@ test.describe("vault route", () => {
       });
     });
     await page.goto("/?file_type=stl");
-
-    await page.getByRole("button", { name: "Load more" }).click();
 
     await expect(page.getByText("Reached match", { exact: true })).toBeVisible();
   });

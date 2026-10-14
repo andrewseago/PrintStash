@@ -81,6 +81,132 @@ test.describe("motion and layering", () => {
     });
   }
 
+  test("an empty folder shows its add-description prompt with its content, not after", async ({
+    page,
+  }) => {
+    await folderWithDescription(page);
+    await page.unroute("**/api/v1/collections/lookup?**");
+    await page.route("**/api/v1/collections/lookup?**", (route) =>
+      route.fulfill({
+        json: {
+          collection: aCollectionNode({ id: 1, name: "maraio", path: "maraio", has_readme: false }),
+          ancestors: [],
+        },
+      }),
+    );
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    const prompt = page.getByRole("button", { name: /Add a description for this collection/ });
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toBeEnabled();
+  });
+
+  for (const [reducedMotion, animation] of [
+    ["no-preference", "folder-in-forward"],
+    ["reduce", "fade-in"],
+  ] as const) {
+    test(`drilling into a folder settles its content in from the right with ${reducedMotion}`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion });
+      await folderWithDescription(page);
+      await page.goto("/");
+      await expect(page.getByRole("heading", { name: "All Models" })).toBeVisible();
+      await expect(page.locator(".folder-cards-forward")).toHaveCount(0);
+
+      await page
+        .getByRole("main")
+        .getByRole("button", { name: /maraio/ })
+        .click();
+      await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+
+      const entrance = page.locator(".folder-cards-forward > *").first();
+      await expect(entrance).toBeVisible();
+      expect(await entrance.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+        animation,
+      );
+    });
+  }
+
+  test("the card entrance is large enough to be noticed on cached content", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    const card = page.locator(".folder-cards-forward > *").first();
+    await expect(card).toBeVisible();
+
+    const entrance = await card.evaluate((node) => {
+      const keyframes = Array.from(document.styleSheets)
+        .flatMap((sheet) => Array.from(sheet.cssRules))
+        .filter(
+          (rule): rule is CSSKeyframesRule =>
+            rule instanceof CSSKeyframesRule && rule.name === "folder-in-forward",
+        );
+      return {
+        duration: getComputedStyle(node).animationDuration,
+        keyframes: keyframes.map((rule) => rule.cssText).join(" "),
+      };
+    });
+    expect(entrance.duration).toBe("0.3s");
+    expect(entrance.keyframes).toContain("translateX(24px)");
+  });
+
+  test("a folder whose cards are already cached still animates them in on a revisit", async ({
+    page,
+  }) => {
+    await folderWithDescription(page);
+    await page.goto("/");
+    const folder = page.getByRole("main").getByRole("button", { name: /maraio/ });
+    await folder.click();
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+    await page.getByRole("main").getByRole("button", { name: "All Models" }).first().click();
+    await expect(page.getByRole("heading", { name: "Root model", exact: true })).toBeVisible();
+
+    await folder.click();
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+
+    const card = page.locator(".folder-cards-forward > *").first();
+    await expect(card).toBeVisible();
+    expect(await card.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+      "folder-in-forward",
+    );
+  });
+
+  test("opening a folder by its URL does not animate its content", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/?c=maraio");
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+    await expect(
+      page.locator(".folder-cards-forward, .folder-cards-back, .folder-cards-jump"),
+    ).toHaveCount(0);
+  });
+
+  test("climbing back out of a folder settles its parent in from the left", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+
+    await page.getByRole("main").getByRole("button", { name: "All Models" }).first().click();
+    await expect(page.getByRole("heading", { name: "Root model", exact: true })).toBeVisible();
+
+    const entrance = page.locator(".folder-cards-back > *").first();
+    await expect(entrance).toBeVisible();
+    expect(await entrance.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+      "folder-in-back",
+    );
+  });
+
   test("folder content waits for its description before replacing the current view", async ({
     page,
   }) => {

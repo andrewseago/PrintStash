@@ -85,7 +85,6 @@ import { useRevisionUpdater } from "./use-revision-updater";
 import { ViewerToolbar } from "./viewer-toolbar";
 import { Localized } from "@/components/ui/localized";
 import { ModelTagsDialog } from "@/components/model-tags-dialog";
-import { MeshPreviewGate } from "@/components/mesh-preview-gate";
 
 const STLViewer = lazy(() =>
   import("@/components/stl-viewer").then((m) => ({ default: m.STLViewer })),
@@ -877,26 +876,19 @@ function ModelDetailPresentation({
                 />
               </Suspense>
             ) : meshFile ? (
-              <MeshPreviewGate
-                key={meshFile.id}
-                sizeBytes={meshFile.size_bytes}
-                posterUrl={thumbUrl}
-                posterAlt={model.name}
-              >
-                <Suspense fallback={ViewerFallback}>
-                  <STLViewer
-                    url={getAssetUrl(`/api/v1/files/${meshFile.id}/stl`)}
-                    modelId={model.id}
-                    onControlsReady={(api) => {
-                      viewerControls.current = api;
-                    }}
-                    onReadyChange={setViewerReady}
-                    displayMode={displayMode}
-                    showGrid={showGrid}
-                    screenshotName={model.slug || model.name}
-                  />
-                </Suspense>
-              </MeshPreviewGate>
+              <Suspense key={meshFile.id} fallback={ViewerFallback}>
+                <STLViewer
+                  url={getAssetUrl(`/api/v1/files/${meshFile.id}/stl`)}
+                  modelId={model.id}
+                  onControlsReady={(api) => {
+                    viewerControls.current = api;
+                  }}
+                  onReadyChange={setViewerReady}
+                  displayMode={displayMode}
+                  showGrid={showGrid}
+                  screenshotName={model.slug || model.name}
+                />
+              </Suspense>
             ) : thumbUrl ? (
               <img
                 src={thumbUrl}

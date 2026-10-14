@@ -4,7 +4,7 @@ from alembic.autogenerate import comparators, renderers
 from alembic.operations import ops
 from sqlalchemy import inspect
 
-from app.db import library_authorization_v2
+from app.db import library_authorization_v2, library_browse_v2
 
 
 class LibraryContractsOp(ops.MigrateOperation):
@@ -29,6 +29,17 @@ class LibraryAuthorizationOp(ops.MigrateOperation):
         return LibraryAuthorizationOp(not self.install)
 
 
+class LibraryBrowseOp(ops.MigrateOperation):
+    def __init__(self, install: bool = True):
+        self.install = install
+
+    def to_diff_tuple(self):
+        return ("library_browse_v2", self.install)
+
+    def reverse(self):
+        return LibraryBrowseOp(not self.install)
+
+
 @comparators.dispatch_for("schema")
 def compare_library_contracts(context, upgrade_ops, schemas):
     if context.connection is None:
@@ -36,8 +47,12 @@ def compare_library_contracts(context, upgrade_ops, schemas):
     if "library_revision" not in inspect(context.connection).get_table_names():
         upgrade_ops.ops.append(LibraryContractsOp())
         upgrade_ops.ops.append(LibraryAuthorizationOp())
-    elif not library_authorization_v2.installed(context.connection):
-        upgrade_ops.ops.append(LibraryAuthorizationOp())
+        upgrade_ops.ops.append(LibraryBrowseOp())
+    else:
+        if not library_authorization_v2.installed(context.connection):
+            upgrade_ops.ops.append(LibraryAuthorizationOp())
+        if not library_browse_v2.installed(context.connection):
+            upgrade_ops.ops.append(LibraryBrowseOp())
 
 
 @renderers.dispatch_for(LibraryContractsOp)
@@ -52,3 +67,10 @@ def render_library_authorization(context, operation):
     context.imports.add("from app.db import library_authorization_v2")
     command = "install" if operation.install else "uninstall"
     return f"library_authorization_v2.{command}(op.get_bind())"
+
+
+@renderers.dispatch_for(LibraryBrowseOp)
+def render_library_browse(context, operation):
+    context.imports.add("from app.db import library_browse_v2")
+    command = "install" if operation.install else "uninstall"
+    return f"library_browse_v2.{command}(op.get_bind())"

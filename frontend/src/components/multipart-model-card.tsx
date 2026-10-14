@@ -20,6 +20,7 @@ import { multipartError, detailHref } from "@/lib/multipart-model-presentation";
 export function MultipartModelCard({
   item,
   origin,
+  arriving = false,
   collectionLabel,
   returnTo,
   availableTags = [],
@@ -27,6 +28,7 @@ export function MultipartModelCard({
 }: {
   item: MultipartModelListItem;
   origin?: LibraryEntry;
+  arriving?: boolean;
   collectionLabel?: string | null;
   returnTo?: string;
   availableTags?: TagRead[];
@@ -78,7 +80,7 @@ export function MultipartModelCard({
 
   return (
     <article
-      className={`${origin ? "" : "animate-card-in"} group relative flex aspect-square h-full min-w-0 max-w-full flex-col overflow-hidden rounded border border-border bg-card text-card-foreground transition-[border-color,box-shadow,transform] duration-fast hover:-translate-y-0.5 hover:border-primary active:scale-[0.99]`}
+      className={`${origin ? "" : "animate-card-in"} ${arriving ? "animate-card-arrive" : ""} group relative flex aspect-square h-full min-w-0 max-w-full flex-col overflow-hidden rounded border border-border bg-card text-card-foreground transition-[border-color,box-shadow,transform] duration-fast hover:-translate-y-0.5 hover:border-primary active:scale-[0.99]`}
     >
       <button
         type="button"

@@ -2854,20 +2854,37 @@ describe("ModelBrowser", () => {
       return within(screen.getByRole("main")).queryByText(name);
     }
 
+    // A change applies by itself shortly after it is noticed, so the routes for
+    // the new data are put in place as soon as the probe has been read.
+    async function changeNoticed(app: { requests(): { url: string }[] }) {
+      await waitFor(() =>
+        expect(app.requests().some((call) => call.url.includes("/browse/revision"))).toBe(true),
+      );
+    }
+    async function refreshStarted(app: { requests(): { url: string }[] }) {
+      await waitFor(() =>
+        expect(
+          app
+            .requests()
+            .filter(
+              (call) => new URL(call.url, "http://test").pathname === "/api/v1/models/browse",
+            ),
+        ).toHaveLength(2),
+      );
+    }
+
     it("waits for refreshed folders before replacing models", async () => {
-      const user = userEvent.setup();
       const pending = Promise.withResolvers<Response>();
       const app = renderVault({
         models: [aModelListItem({ name: "Original model" })],
         collections: [aCollection({ name: "Original folder" })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": modelPage("Current model"),
         "GET /api/v1/collections/children": () => pending.promise,
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       await waitFor(() =>
         expect(
           app.requests().filter((call) => call.url.includes("/collections/children")),
@@ -2883,19 +2900,17 @@ describe("ModelBrowser", () => {
     });
 
     it("waits for refreshed models before replacing folders", async () => {
-      const user = userEvent.setup();
       const pending = Promise.withResolvers<Response>();
       const app = renderVault({
         models: [aModelListItem({ name: "Original model" })],
         collections: [aCollection({ name: "Original folder" })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": () => pending.promise,
         "GET /api/v1/collections/children": folderPage("Current folder"),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       await waitFor(() =>
         expect(
           app.requests().filter((call) => call.url.includes("/collections/children")),
@@ -2910,7 +2925,6 @@ describe("ModelBrowser", () => {
     });
 
     it("refreshes the selected folder lookup", async () => {
-      const user = userEvent.setup();
       const original = [
         aCollection({ id: 1, name: "Original parent", path: "parts" }),
         aCollection({ id: 2, name: "Original child", path: "parts/child", parent_id: 1 }),
@@ -2921,7 +2935,7 @@ describe("ModelBrowser", () => {
         collections: original,
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         ...collectionTreeRoutes([
           aCollection({ ...original[0], name: "Current parent" }),
@@ -2929,7 +2943,6 @@ describe("ModelBrowser", () => {
         ]),
         "GET /api/v1/models/browse": modelPage("Current model"),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       expect(await screen.findByRole("heading", { name: "Current child" })).toBeVisible();
       expect(
         within(screen.getByRole("main")).getByRole("button", { name: "Current parent" }),
@@ -2938,7 +2951,6 @@ describe("ModelBrowser", () => {
     });
 
     it("keeps folder metadata with the displayed snapshot", async () => {
-      const user = userEvent.setup();
       const pending = Promise.withResolvers<Response>();
       const app = renderVault({
         at: "/?c=parts",
@@ -2946,12 +2958,11 @@ describe("ModelBrowser", () => {
         collections: [aCollection({ tags: ["original-tag"] })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         ...collectionTreeRoutes([aCollection({ tags: ["current-tag"] })]),
         "GET /api/v1/models/browse": () => pending.promise,
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       await waitFor(() =>
         expect(
           app
@@ -2969,14 +2980,13 @@ describe("ModelBrowser", () => {
     });
 
     it("follows the refreshed folder identity", async () => {
-      const user = userEvent.setup();
       const app = renderVault({
         at: "/?c=parts",
         models: [aModelListItem({ name: "Original model" })],
         collections: [aCollection()],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         ...collectionTreeRoutes([
           aCollection({ id: 7, name: "Replacement", path: "parts" }),
@@ -2984,7 +2994,6 @@ describe("ModelBrowser", () => {
         ]),
         "GET /api/v1/models/browse": modelPage("Current model"),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       expect(await within(screen.getByRole("main")).findByText("Replacement child")).toBeVisible();
       expect(
         app
@@ -2998,19 +3007,17 @@ describe("ModelBrowser", () => {
     });
 
     it("refreshes active folder search results", async () => {
-      const user = userEvent.setup();
       const app = renderVault({
         at: "/?q=gear",
         models: [aModelListItem({ name: "Original model" })],
         collections: [aCollection({ name: "Gear original" })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": modelPage("Current model"),
         "GET /api/v1/collections/search": folderPage("Gear current"),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
       expect(await within(screen.getByRole("main")).findByText("Gear current")).toBeVisible();
       expect(mainHas("Gear original")).not.toBeInTheDocument();
     });
@@ -3057,13 +3064,12 @@ describe("ModelBrowser", () => {
         collections: [aCollection({ name: "Original folder" })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": modelPage("Current model"),
         "GET /api/v1/collections/children": json({ detail: "folder unavailable" }, 503),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
-      await screen.findByRole("button", { name: "Retry" });
+      await screen.findByRole("button", { name: "Retry" }, { timeout: 5000 });
       expect(mainHas("Original model")).toBeVisible();
       expect(mainHas("Original folder")).toBeVisible();
       expect(mainHas("Current model")).not.toBeInTheDocument();
@@ -3081,13 +3087,12 @@ describe("ModelBrowser", () => {
         collections: [aCollection()],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": modelPage("Current model"),
         "GET /api/v1/collections/lookup": json({ detail: "lookup unavailable" }, 503),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
-      await screen.findByRole("button", { name: "Retry" });
+      await screen.findByRole("button", { name: "Retry" }, { timeout: 5000 });
       expect(screen.getByRole("heading", { name: "Parts" })).toBeVisible();
       expect(mainHas("Original model")).toBeVisible();
       app.route(collectionTreeRoutes([aCollection({ name: "Current folder" })]));
@@ -3105,13 +3110,12 @@ describe("ModelBrowser", () => {
         collections: [aCollection({ name: "Private folder", tags: ["private-tag"] })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       expect(screen.getByRole("heading", { name: "Private folder" })).toBeVisible();
       app.route({
         "GET /api/v1/collections/lookup": json({ detail: "collection_not_found" }, 404),
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
-      await screen.findByRole("button", { name: "Retry" });
+      await screen.findByRole("button", { name: "Retry" }, { timeout: 5000 });
       expect(mainHas("Private model")).not.toBeInTheDocument();
       expect(mainHas("private-tag")).not.toBeInTheDocument();
       expect(
@@ -3146,7 +3150,7 @@ describe("ModelBrowser", () => {
         ],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({
         "GET /api/v1/models/browse": (url) => {
           const collection = new URL(url, "http://test").searchParams.get("collection");
@@ -3157,7 +3161,7 @@ describe("ModelBrowser", () => {
               : pending.promise;
         },
       });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
+      await refreshStarted(app);
       await user.click(within(screen.getByRole("main")).getByRole("button", { name: /Parts/ }));
       await waitFor(() =>
         expect(
@@ -3184,15 +3188,14 @@ describe("ModelBrowser", () => {
     });
 
     it("retires a refresh with its session", async () => {
-      const user = userEvent.setup();
       const pending = Promise.withResolvers<Response>();
       const app = renderVault({
         models: [aModelListItem({ name: "Private model" })],
         routes: { "GET /api/v1/models/browse/revision": changedRevision },
       });
-      await screen.findByRole("button", { name: "Refresh library" });
+      await changeNoticed(app);
       app.route({ "GET /api/v1/models/browse": () => pending.promise });
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
+      await refreshStarted(app);
       act(() => clearLogin());
       pending.resolve(modelPage("Retired model"));
       await act(async () => {
@@ -3203,9 +3206,86 @@ describe("ModelBrowser", () => {
     });
   });
 
+  describe("loading the next page by scrolling", () => {
+    const observers: { callback: IntersectionObserverCallback; disconnected: boolean }[] = [];
+    beforeEach(() => {
+      observers.length = 0;
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          entry: { callback: IntersectionObserverCallback; disconnected: boolean };
+          constructor(callback: IntersectionObserverCallback) {
+            this.entry = { callback, disconnected: false };
+            observers.push(this.entry);
+          }
+          observe() {}
+          unobserve() {}
+          takeRecords() {
+            return [];
+          }
+          disconnect() {
+            this.entry.disconnected = true;
+          }
+        },
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    function reachTheEnd() {
+      const live = observers.filter((observer) => !observer.disconnected).at(-1);
+      if (!live) throw new Error("no observer is watching the end of the list");
+      // SAFETY: the component reads only `isIntersecting` from an entry, nothing from the observer.
+      const entries = [{ isIntersecting: true }] as IntersectionObserverEntry[];
+      // SAFETY: the callback ignores its second argument, which only a real observer supplies.
+      act(() => live.callback(entries, {} as IntersectionObserver));
+    }
+    function pagedRoutes(rateLimited: () => boolean) {
+      return {
+        "GET /api/v1/models/browse": (url: string) => {
+          const continuation = new URL(url, "http://test").searchParams.has("cursor");
+          if (continuation && rateLimited()) return json({ detail: "rate_limited" }, 429);
+          return json({
+            items: [
+              {
+                kind: "model",
+                model: aModelListItem({
+                  id: continuation ? 902 : 901,
+                  name: continuation ? "Next page" : "First page",
+                }),
+              },
+            ],
+            total: 2,
+            next_cursor: continuation ? null : "next",
+            browse_revision: "r1",
+            authorization_revision: "a1",
+          });
+        },
+      };
+    }
+
+    it("loads the next page when the end comes into view, with no button", async () => {
+      renderVault({ routes: pagedRoutes(() => false) });
+      expect(await screen.findByText("First page")).toBeVisible();
+      expect(screen.queryByRole("button", { name: /Load more/ })).not.toBeInTheDocument();
+      expect(screen.queryByText("Next page")).not.toBeInTheDocument();
+
+      reachTheEnd();
+
+      expect(await screen.findByText("Next page")).toBeVisible();
+    });
+
+    it("brings the button back after a failed read instead of retrying without end", async () => {
+      renderVault({ routes: pagedRoutes(() => true) });
+      expect(await screen.findByText("First page")).toBeVisible();
+
+      reachTheEnd();
+
+      expect(await screen.findByRole("button", { name: /Load more/ })).toBeVisible();
+    });
+  });
+
   describe("Library authority", () => {
-    it("keeps displayed rows until explicit refresh", async () => {
-      const user = userEvent.setup();
+    it("keeps displayed rows until a change settles on its own", async () => {
       const app = renderVault({
         models: [aModelListItem({ name: "Original bracket" })],
         routes: {
@@ -3215,7 +3295,9 @@ describe("ModelBrowser", () => {
           }),
         },
       });
-      await screen.findByText("The library has changed. Refresh before loading more results.");
+      await waitFor(() =>
+        expect(app.requests().some((call) => call.url.includes("/browse/revision"))).toBe(true),
+      );
       expect(screen.getByText("Original bracket")).toBeVisible();
       expect(
         app
@@ -3233,8 +3315,6 @@ describe("ModelBrowser", () => {
           authorization_revision: "a1",
         }),
       });
-
-      await user.click(screen.getByRole("button", { name: "Refresh library" }));
 
       expect(await screen.findByText("Current bracket")).toBeVisible();
       expect(screen.queryByText("Original bracket")).not.toBeInTheDocument();

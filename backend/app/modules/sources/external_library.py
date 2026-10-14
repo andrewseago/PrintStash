@@ -67,6 +67,7 @@ from app.modules.sources.library_source import (
 from app.modules.sources.library_source import (
     timestamp as source_timestamp,
 )
+from app.modules.sources.remote_discovery import report_progress
 from app.modules.storage.filesystem import FsKind, detect_fs_kind
 from app.modules.storage.hashing import sha256_file
 from app.modules.storage.root_markers import (
@@ -737,6 +738,25 @@ def _remote_checkpoint(
     return checkpoint
 
 
+def _discovery_reporter(job_context: JobContext | None):
+    """Tell the Job what a long listing has found, at most once a second."""
+    last = 0.0
+
+    def report(found: int, listed: int, folder: str) -> None:
+        nonlocal last
+        now = monotonic()
+        if job_context is None or now - last < 1.0:
+            return
+        last = now
+        job_context.update(
+            stage="discovering",
+            processed=found,
+            current_item=f"{folder or '/'} · {listed} folders",
+        )
+
+    return report
+
+
 def scan_remote_library(
     library_id: int,
     *,
@@ -777,11 +797,12 @@ def scan_remote_library(
             try:
                 if monotonic() - scan_started >= _REMOTE_SLICE_MAX_SECONDS:
                     raise LibrarySourceError("remote_scan_slice_deadline")
-                page = source.list_page(
-                    library.source_prefix,
-                    cursor=checkpoint.cursor,
-                    limit=_REMOTE_PAGE_LIMIT,
-                )
+                with report_progress(_discovery_reporter(job_context)):
+                    page = source.list_page(
+                        library.source_prefix,
+                        cursor=checkpoint.cursor,
+                        limit=_REMOTE_PAGE_LIMIT,
+                    )
                 selected: list[SourceEntry] = []
                 bytes_in_slice = 0
                 consumed = 0
@@ -873,6 +894,10 @@ def scan_remote_library(
                 checkpoint.metadata_ops += page.metadata_ops
                 checkpoint.bytes_read += bytes_in_slice
                 checkpoint.updated_at = utcnow()
+                # A finished scan that observed no model file at all: the root is
+                # empty, missing (S3 keys are case-sensitive) or holds no
+                # supported format. The summary says so rather than a quiet "+0".
+                no_files_found = False
                 if page.complete:
                     session.flush()
                     total = session.exec(
@@ -912,6 +937,7 @@ def scan_remote_library(
                             ExternalLibraryObservation.checkpoint_id == checkpoint.id,
                         )
                     ).one()
+                    no_files_found = observed_count == 0 and summary.skipped == 0
                     if (not observed_count and total) or len(missing) > removal_limit:
                         summary.error = "remote_mass_removal_blocked"
                         summary.aborted = True
@@ -936,6 +962,7 @@ def scan_remote_library(
                     "cursor": checkpoint.cursor,
                     "metadata_ops": checkpoint.metadata_ops,
                     "bytes_read": checkpoint.bytes_read,
+                    "no_files_found": no_files_found,
                 }
                 library.last_scan_summary = json.dumps(result)
                 if not checkpoint.complete:

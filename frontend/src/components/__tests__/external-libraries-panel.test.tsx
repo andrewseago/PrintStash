@@ -385,6 +385,226 @@ describe("ExternalLibrariesPanel", () => {
     });
   });
 
+  describe("naming and editing a source", () => {
+    function aRemoteSource(over: Partial<ExternalLibrary> = {}): ExternalLibrary {
+      return aVolume({
+        name: "demo",
+        root_path: "source://7/",
+        source_kind: "s3",
+        connection_id: 1,
+        source_prefix: "",
+        watch_mode: "off",
+        ...over,
+      });
+    }
+    const connections = [
+      aStorageConnection({
+        id: 1,
+        name: "R2Test",
+        configuration: { bucket: "test", root: "PrintStash" },
+      }),
+    ];
+
+    it("shows a remote source by its connection, not its internal id", async () => {
+      renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+
+      expect(await screen.findByText("R2Test · test/PrintStash/")).toBeInTheDocument();
+      expect(screen.queryByText("source://7/")).toBeNull();
+    });
+
+    it("warns when a finished scan found no model file, naming where it looked", async () => {
+      renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([
+          aRemoteSource({
+            last_scan_summary: aSummary({ added: 0, updated: 0, no_files_found: true }),
+          }),
+        ]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+
+      const warning = await screen.findByRole("status");
+      expect(warning).toHaveTextContent(
+        "No model files found at R2Test · test/PrintStash/. Check the folder name: remote paths are case-sensitive.",
+      );
+      expect(within(warning).getByRole("link", { name: "Edit connection" })).toHaveAttribute(
+        "href",
+        "/settings?section=remote-storage",
+      );
+    });
+
+    it("stays quiet when a scan found models", async () => {
+      renderPanel({
+        list: vi
+          .fn<() => Promise<ExternalLibrary[]>>()
+          .mockResolvedValue([
+            aRemoteSource({ last_scan_summary: aSummary({ added: 4, no_files_found: false }) }),
+          ]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      expect(screen.queryByText(/No model files found/)).toBeNull();
+    });
+
+    it("moves a remote source to another folder of its connection", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.type(
+        within(dialog).getByRole("textbox", { name: "Source path within connection" }),
+        "thingi10k",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() =>
+        expect(api.update).toHaveBeenCalledWith(
+          7,
+          { source_prefix: "thingi10k" },
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        ),
+      );
+    });
+
+    it("shows the connection's base apart from the source's own folder", async () => {
+      const user = userEvent.setup();
+      renderPanel({
+        list: vi
+          .fn<() => Promise<ExternalLibrary[]>>()
+          .mockResolvedValue([aRemoteSource({ source_prefix: "models" })]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      expect(await screen.findByText("R2Test · test/PrintStash/models/")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+
+      expect(within(dialog).getByText("R2Test · test/PrintStash/")).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("textbox", { name: "Source path within connection" }),
+      ).toHaveValue("models");
+    });
+
+    it("links a remote source's dialog to its connection", async () => {
+      const user = userEvent.setup();
+      renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+
+      expect(within(dialog).getByRole("link", { name: "Edit connection" })).toHaveAttribute(
+        "href",
+        "/settings?section=remote-storage",
+      );
+    });
+
+    it("renames a mounted source, sending only what changed", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel();
+      await screen.findByText("NAS models");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      const name = within(dialog).getByRole("textbox", { name: "Source name" });
+      await user.clear(name);
+      await user.type(name, "Workshop NAS");
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() =>
+        expect(api.update).toHaveBeenCalledWith(
+          7,
+          { name: "Workshop NAS" },
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        ),
+      );
+    });
+
+    it("moves a mounted source to another folder", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel();
+      await screen.findByText("NAS models");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      const folder = within(dialog).getByRole("textbox", { name: "Mounted folder path" });
+      await user.clear(folder);
+      await user.type(folder, "/mnt/nas/other");
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() =>
+        expect(api.update).toHaveBeenCalledWith(
+          7,
+          { root_path: "/mnt/nas/other" },
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        ),
+      );
+    });
+
+    it("never offers a folder path for a remote source", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(
+        within(dialog).getByRole("combobox", { name: "Collection layout" }),
+        "single",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      expect(within(dialog).queryByRole("textbox", { name: "Mounted folder path" })).toBeNull();
+      await waitFor(() =>
+        expect(api.update).toHaveBeenCalledWith(
+          7,
+          { collection_mode: "single" },
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        ),
+      );
+    });
+
+    it("sends nothing when saved without a change", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel();
+      await screen.findByText("NAS models");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      expect(api.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("the sources already indexed", () => {
     it("names each mirrored folder", async () => {
       renderPanel();

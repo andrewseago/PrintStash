@@ -521,6 +521,74 @@ class TestFacets:
         ]
 
 
+class TestDisjunctiveFacets:
+    def _library(self, db_session: Session):
+        user = build_user(db_session, "disjunctive", superuser=True)
+        stl = build_model(db_session, "Stl only")
+        build_file(db_session, stl, filename="a.stl", file_type=FileType.STL)
+        step = build_model(db_session, "Step only")
+        build_file(db_session, step, filename="b.step", file_type=FileType.STEP)
+        both = build_model(db_session, "Both")
+        build_file(db_session, both, filename="c.stl", file_type=FileType.STL)
+        build_file(db_session, both, filename="c.step", file_type=FileType.STEP)
+        return user
+
+    def test_a_selected_group_still_offers_its_siblings(
+        self, db_session: Session
+    ) -> None:
+        user = self._library(db_session)
+
+        result = models_facets.facets(
+            db_session, user, ModelFilters(file_type=[FileType.STEP])
+        )
+
+        assert {item.value: item.count for item in result.file_type} == {
+            "step": 2,
+            "stl": 2,
+        }
+
+    def test_other_groups_are_still_counted_under_the_selection(
+        self, db_session: Session
+    ) -> None:
+        user = self._library(db_session)
+        build_file(
+            db_session,
+            build_model(db_session, "Elsewhere"),
+            filename="d.gcode",
+            file_type=FileType.GCODE,
+            metadata={"material_type": "PETG"},
+        )
+
+        result = models_facets.facets(
+            db_session, user, ModelFilters(file_type=[FileType.STEP])
+        )
+
+        assert result.material_type == []
+        assert result.storage[0].count == 2
+
+    def test_an_unselected_group_is_counted_once_as_before(
+        self, db_session: Session
+    ) -> None:
+        user = self._library(db_session)
+
+        result = models_facets.facets(db_session, user, ModelFilters())
+
+        assert {item.value: item.count for item in result.file_type} == {
+            "step": 2,
+            "stl": 2,
+        }
+
+    def test_printed_is_widened_the_same_way(self, db_session: Session) -> None:
+        user = self._library(db_session)
+
+        result = models_facets.facets(db_session, user, ModelFilters(printed=False))
+
+        assert {item.value: item.count for item in result.printed} == {
+            "yes": 0,
+            "no": 3,
+        }
+
+
 class TestPrintStatistics:
     def test_print_statistics_invalid_period_defaults_to_30d(
         self, db_session: Session

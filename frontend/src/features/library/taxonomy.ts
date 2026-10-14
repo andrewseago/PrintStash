@@ -24,6 +24,17 @@ export function useTaxonomyCommands(overrides?: Pick<typeof api, "createCollecti
       return value;
     });
   }
+  /** A description changes no name, count, choice or permission, so only the
+   *  `has_readme` flags that live under `collections` need revalidating. The
+   *  outliner keeps its rows, expansion and scroll, and no browse snapshot moves. */
+  async function changeReadme<T>(write: () => Promise<T>): Promise<T> {
+    return withSessionRequest(async (request) => {
+      const value = await write();
+      request.assertCurrent();
+      void client.invalidateQueries({ queryKey: queryKeys.collections });
+      return value;
+    });
+  }
   return {
     createTag: (...args: Parameters<typeof api.createTag>) =>
       change("tags", () => api.createTag(...args)),
@@ -40,6 +51,6 @@ export function useTaxonomyCommands(overrides?: Pick<typeof api, "createCollecti
     replaceCollectionTags: (...args: Parameters<typeof api.replaceCollectionTags>) =>
       change("collections", () => api.replaceCollectionTags(...args)),
     setCollectionReadme: (...args: Parameters<typeof api.setCollectionReadme>) =>
-      change("collections", () => api.setCollectionReadme(...args)),
+      changeReadme(() => api.setCollectionReadme(...args)),
   };
 }

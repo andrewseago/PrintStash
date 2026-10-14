@@ -577,14 +577,28 @@ own settings. ASCII toolpaths continue to use the Artifact's text directly.
 Optional qualified GPU execution, settings and device exposure are described in [compute deployment](compute.md).
 
 
-### Optional GPU thumbnail evaluation
+### Using a GPU
 
-Build the backend with `PRINTSTASH_VARIANT=gpu-render` for wgpu rendering without
-the ONNX WebGPU plugin. `VAULT_COMPUTE_BACKEND=auto|vulkan|opengl` selects the native
-graphics backend; auto uses Mesa OpenGL/D3D12 on WSL. The default
+There is one image. It carries the GPU runtime and uses a GPU only when the
+container is handed one, so no separate image is built or pulled. With no device
+it runs on the CPU exactly as before. Hand a device in the way your platform
+expects (Compose, Unraid, CasaOS and Umbrel examples are in
+[compute deployment](compute.md) and the catalogue templates):
+
+- NVIDIA: the NVIDIA Container Toolkit with `NVIDIA_DRIVER_CAPABILITIES=all`.
+- Intel and AMD on Linux: `/dev/dri` and the render group.
+- WSL2: `/dev/dxg` and `/usr/lib/wsl`; the image sets the Mesa D3D12 variables.
+
+Two budgets keep the GPU and the machine from being overcommitted, and both can
+be set per deployment: `VAULT_COMPUTE_MEMORY_MB` caps the estimated device memory
+the compute broker may use (default 1024), and `VAULT_MESH_MEMORY_BUDGET_FRACTION`
+(default 0.5) with `VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION` (default 0.25) cap the
+share of system RAM native mesh work and resident AI models may hold.
+
+`VAULT_COMPUTE_BACKEND=auto|vulkan|opengl` selects the native graphics backend;
+auto uses Mesa OpenGL/D3D12 on WSL. The default
 `VAULT_COMPUTE_RENDER_POLICY=qualified` requires measured operation receipts.
 `preview` enables bounded hardware evaluation for the administrator's visual
 review, without asserting quality or speed. `VAULT_COMPUTE_MODE=cpu` overrides it.
-Follow [compute deployment](compute.md) for Docker device/library mounts and
-private evaluation volumes. The minimal CPU image and public ingestion response
-shapes are unchanged.
+Settings → GPU shows whether the API can reach a device and which operations are
+placed on it. Public ingestion response shapes are unchanged.

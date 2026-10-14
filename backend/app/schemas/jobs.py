@@ -19,6 +19,7 @@ from app.db.models.types import (
 
 JobStage = Literal[
     "resolving",
+    "discovering",
     "downloading",
     "inspecting",
     "extracting",

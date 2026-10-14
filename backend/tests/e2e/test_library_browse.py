@@ -83,7 +83,9 @@ class TestLibraryBrowse:
         revision = await api.get(
             "/api/v1/models/browse/revision", headers=superuser_headers
         )
-        assert revision.json()["browse_revision"] != displayed["browse_revision"]
+        # A thumbnail arrival is read through its own endpoint; it must not make
+        # the displayed page look stale (browse contract v2).
+        assert revision.json()["browse_revision"] == displayed["browse_revision"]
 
     @pytest.mark.asyncio
     async def test_preserves_mixed_order_across_continuation(

@@ -15,6 +15,7 @@ from typing import Optional
 from croniter import croniter
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, func
 from sqlmodel import Session, col, select
 
 import app.modules.sources.root_binding as source_root_binding
@@ -26,15 +27,18 @@ from app.core.time import utcnow
 from app.db.models import (
     Collection,
     ExternalLibrary,
+    ExternalLibraryCheckpoint,
     ExternalLibraryCollectionMode,
     ExternalLibraryTombstone,
     ExternalLibraryWatchMode,
+    File,
     JobKind,
     LibrarySourceKind,
     StorageConnection,
     StorageConnectionPurpose,
     User,
 )
+from app.db.scopes import live
 from app.db.session import get_session
 from app.modules.administration import runtime_config
 from app.modules.sources import edits as source_edits
@@ -107,6 +111,11 @@ class LibraryUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     root_path: Optional[str] = Field(default=None, min_length=1, max_length=1024)
+    source_prefix: Optional[str] = Field(
+        default=None,
+        max_length=1024,
+        description="Folder inside a remote source's connection; empty reads the whole root.",
+    )
     enabled: Optional[bool] = None
     scan_schedule: Optional[str] = Field(default=None, max_length=128)
     watch_mode: Optional[ExternalLibraryWatchMode] = None
@@ -127,6 +136,43 @@ class LibraryRootEnrollment(BaseModel):
 class LibraryRediscover(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_key: str = Field(min_length=1, max_length=2048)
+
+
+def _change_source_prefix(session: Session, lib: ExternalLibrary, value: str) -> None:
+    """Point a remote source at another folder of its connection.
+
+    Only a source that has indexed nothing may move: its catalog rows and their
+    keys belong to the old folder, so moving would read as a mass removal. Such a
+    source is removed (the catalog only, never the files) and added again.
+    """
+    if lib.source_kind == LibrarySourceKind.MOUNTED:
+        raise HTTPException(status_code=400, detail="library_source_prefix_remote_only")
+    prefix = value.strip().strip("/")
+    if prefix and any(part in {"", ".", ".."} for part in prefix.split("/")):
+        raise HTTPException(status_code=400, detail="library_source_prefix_invalid")
+    if prefix == lib.source_prefix:
+        return
+    indexed = session.exec(
+        select(func.count())
+        .select_from(File)
+        .where(
+            File.external_library_id == lib.id,
+            live(File),
+            File.source_key != None,  # noqa: E711
+        )
+    ).one()
+    if indexed:
+        raise HTTPException(status_code=409, detail="library_source_prefix_has_files")
+    # A cursor belongs to the folder it was issued for.
+    session.execute(
+        delete(ExternalLibraryCheckpoint).where(
+            col(ExternalLibraryCheckpoint.library_id) == lib.id
+        )
+    )
+    lib.source_prefix = prefix
+    lib.root_path = f"source://{lib.connection_id}/{prefix}"
+    lib.last_scan_status = None
+    lib.last_scan_summary = None
 
 
 def _validate_root_path(
@@ -371,6 +417,8 @@ def update_library(
             # A root-path change must require a fresh, explicit enrollment.
             lib.root_identity = None
             lib.fs_kind = detect_fs_kind(canonical_root)
+    if body.source_prefix is not None:
+        _change_source_prefix(session, lib, body.source_prefix)
     if body.name is not None:
         lib.name = body.name.strip()
     if body.enabled is not None:

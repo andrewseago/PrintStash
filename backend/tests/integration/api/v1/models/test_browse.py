@@ -777,9 +777,11 @@ class TestBrowseThumbnails:
             "authorization_revision": original["authorization_revision"],
         }
         assert original["items"][0]["model"]["thumbnail_url"] is None
+        # Publishing a thumbnail is read through this endpoint; it must not make
+        # the displayed page look stale (browse contract v2).
         assert (
             client.get(BROWSE + "/revision", headers=auth_headers).json()[
                 "browse_revision"
             ]
-            != original["browse_revision"]
+            == original["browse_revision"]
         )

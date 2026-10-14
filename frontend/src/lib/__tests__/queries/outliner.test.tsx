@@ -111,6 +111,53 @@ function RestorationProbe({
   );
 }
 
+describe("outliner continuity across filters", () => {
+  it("keeps the rows on screen while a new filter's counts load", async () => {
+    const pending = Promise.withResolvers<Response>();
+    function Probe() {
+      const [favorites, setFavorites] = useState(false);
+      const query = useOutlinerCollections({ view: "all", favorites: favorites || undefined });
+      return (
+        <>
+          <button onClick={() => setFavorites(true)}>Favorites only</button>
+          <output aria-label="Rows">
+            {query.data?.pages
+              .flatMap((p) => p.items)
+              .map((p) => `${p.name}:${p.subtree_entry_count}`)
+              .join(",")}
+          </output>
+          <output aria-label="Stale">{String(query.isPlaceholderData)}</output>
+        </>
+      );
+    }
+    renderApp(<Probe />, {
+      routes: {
+        "GET /api/v1/outliner/collections": (url) =>
+          new URL(url, "http://test").searchParams.get("favorites") === "true"
+            ? pending.promise
+            : json({
+                ...restoredPage("Parts"),
+                items: [{ ...restoredPage("Parts").items[0], subtree_entry_count: 9 }],
+              }),
+      },
+    });
+    expect(await screen.findByText("Parts:9")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Favorites only" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Stale")).toHaveTextContent("true"));
+    expect(screen.getByLabelText("Rows")).toHaveTextContent("Parts:9");
+    pending.resolve(
+      json({
+        ...restoredPage("Parts"),
+        items: [{ ...restoredPage("Parts").items[0], subtree_entry_count: 2 }],
+      }),
+    );
+    expect(await screen.findByText("Parts:2")).toBeVisible();
+    expect(screen.getByLabelText("Stale")).toHaveTextContent("false");
+  });
+});
+
 describe("useOutlinerRestore", () => {
   it("seeds the tree before descendant hooks fetch", async () => {
     const app = renderApp(<RestorationProbe />, {

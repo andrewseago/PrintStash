@@ -1,3 +1,6 @@
+import { EditLibrarySourceModal } from "@/components/edit-library-source-modal";
+import { describeSourceLocation } from "@/lib/library-source-location";
+import { Link } from "@/lib/link";
 import { currentLocale } from "@/lib/locale";
 import { uiText } from "@/lib/locale";
 import { useUiLocale } from "@/lib/i18n";
@@ -7,6 +10,7 @@ import {
   CheckCircle2,
   FolderSync,
   HardDrive,
+  Pencil,
   Plus,
   RefreshCw,
   ShieldAlert,
@@ -374,6 +378,7 @@ function AdminLibrarySourcesPanel({
   const busyId = command.busyId;
   const enableBusy = configCommand.isPending;
   const [toggleReview, setToggleReview] = useState<SourceToggleReview>({ phase: "idle" });
+  const [editTarget, setEditTarget] = useState<ExternalLibrary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     source: ExternalLibrary;
     session: number;
@@ -835,7 +840,7 @@ function AdminLibrarySourcesPanel({
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground font-mono mt-1 truncate">
-                            {lib.root_path}
+                            {describeSourceLocation(lib, connections)}
                           </p>
                           {(lib.source_kind ?? "mounted") !== "mounted" && (
                             <p className="mt-1 text-2xs text-muted-foreground">
@@ -954,6 +959,32 @@ function AdminLibrarySourcesPanel({
                                   : ""}
                               </p>
                             )}
+                          {(lib.last_scan_status === "ok" || lib.last_scan_status === "partial") &&
+                            s?.no_files_found === true && (
+                              <p
+                                role="status"
+                                className="mt-2 flex items-start gap-1.5 rounded border border-warning/30 bg-warning/10 p-2 text-2xs text-foreground"
+                              >
+                                <AlertTriangle
+                                  className="mt-0.5 h-3 w-3 shrink-0 text-warning"
+                                  aria-hidden
+                                />
+                                <span>
+                                  {uiText(
+                                    "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.",
+                                    { value1: describeSourceLocation(lib, connections) },
+                                  )}{" "}
+                                  {(lib.source_kind ?? "mounted") !== "mounted" && (
+                                    <Link
+                                      href="/settings?section=remote-storage"
+                                      className="font-medium underline"
+                                    >
+                                      {uiText("Edit connection")}
+                                    </Link>
+                                  )}
+                                </span>
+                              </p>
+                            )}
                           {lib.last_scan_status === "partial" && (
                             <p className="mt-1 inline-flex items-center gap-1 text-2xs text-destructive">
                               <AlertTriangle className="h-3 w-3" />
@@ -996,6 +1027,16 @@ function AdminLibrarySourcesPanel({
                                 lib.enabled ? "translate-x-6" : "translate-x-1"
                               }`}
                             />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!commandsAllowed || command.blocked || busyId !== null}
+                            onClick={() => setEditTarget(lib)}
+                            aria-label={uiText("Edit source")}
+                            title={uiText("Edit source")}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
                           </button>
                           <button
                             type="button"
@@ -1239,6 +1280,16 @@ function AdminLibrarySourcesPanel({
             confirmLabel={uiText("Enroll root")}
             busy={enrollTarget !== null && busyId === enrollTarget.source.id}
             onConfirm={() => enrollTarget && handleEnroll(enrollTarget)}
+          />
+        )}
+        {editTarget && (
+          <EditLibrarySourceModal
+            key={editTarget.id}
+            source={editTarget}
+            location={describeSourceLocation({ ...editTarget, source_prefix: "" }, connections)}
+            disabled={!commandsAllowed || command.blocked || busyId !== null}
+            onSave={(payload) => void handleUpdate(editTarget, payload)}
+            onClose={() => setEditTarget(null)}
           />
         )}
       </div>

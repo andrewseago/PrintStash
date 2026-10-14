@@ -6,6 +6,7 @@ from sqlalchemy import and_, select, text, update
 from sqlmodel import Session, SQLModel
 
 from app.core.errors import OperationError
+from app.db import library_browse_v2
 from app.db.library_contracts_v1 import BROWSE_TABLES
 from app.db.models import User
 from app.modules.library import commands, multipart_models, provenance
@@ -121,8 +122,14 @@ def catalog_writer(db_session: Session, table: str) -> User:
     return user
 
 
+# Tables whose v1 browse triggers library_browse_v2 narrows; its own tests
+# cover them (tests/integration/db/test_library_browse_v2.py).
+NARROWED = {*library_browse_v2.SILENT_TABLES, *library_browse_v2.WATCHED_FIELDS}
+V1_TABLES = tuple(table for table in BROWSE_TABLES if table not in NARROWED)
+
+
 class TestInstall:
-    @pytest.mark.parametrize("table", BROWSE_TABLES, ids=BROWSE_TABLES)
+    @pytest.mark.parametrize("table", V1_TABLES, ids=V1_TABLES)
     def test_rejects_continuation_after_each_catalog_dependency_writer(
         self, db_session: Session, table: str, catalog_writer: User
     ):
@@ -156,11 +163,21 @@ class TestInstall:
             {"table": table},
         ).all()
 
-        assert len(rows) == 3
-        assert {name for name, _ddl in rows} == {
-            f"ps_browse_{table}_{action}_v1"
-            for action in ("insert", "update", "delete")
-        }
+        if table in library_browse_v2.SILENT_TABLES:
+            expected = set()
+        elif table in library_browse_v2.WATCHED_FIELDS:
+            expected = {
+                f"ps_browse_{table}_insert_v1",
+                f"ps_browse_{table}_update_v2",
+                f"ps_browse_{table}_delete_v1",
+            }
+        else:
+            expected = {
+                f"ps_browse_{table}_{action}_v1"
+                for action in ("insert", "update", "delete")
+            }
+        assert {name for name, _ddl in rows} == expected
+        assert len(rows) == len(expected)
         assert all(
             "INSERT INTO library_revision" in ddl and "ON CONFLICT" in ddl
             for _name, ddl in rows

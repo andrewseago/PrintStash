@@ -7,6 +7,7 @@ import pytest
 from app.core.time import utcnow
 from app.db.models import (
     FileType,
+    LibrarySourceKind,
     User,
     VaultAuditFinding,
     VaultAuditMode,
@@ -58,6 +59,85 @@ class TestInventory:
         current = inventory(db_session)
         assert current.external_referenced_bytes == 700
         assert current.unique_owned_bytes == 0
+
+    def test_places_bytes_in_the_vault_then_in_each_library_source(
+        self,
+        db_session,
+        make_model,
+        make_file,
+        make_external_library,
+        make_storage_connection,
+        tmp_path,
+    ):
+        mounted = make_external_library(tmp_path / "nas", name="NAS models")
+        connection = make_storage_connection("R2Test")
+        remote = make_external_library(
+            "source://1/",
+            name="demo",
+            source_kind=LibrarySourceKind.S3,
+            connection_id=connection.id,
+        )
+        make_file(
+            make_model(), external=True, external_library_id=mounted.id, size_bytes=300
+        )
+        make_file(
+            make_model(), external=True, external_library_id=remote.id, size_bytes=900
+        )
+        make_file(
+            make_model(), external=True, external_library_id=remote.id, size_bytes=100
+        )
+
+        places = {place.label: place for place in inventory(db_session).locations}
+
+        assert places["NAS models"].logical_bytes == 300
+        assert places["NAS models"].remote is False
+        assert places["demo"].logical_bytes == 1000
+        assert places["demo"].count == 2
+        assert places["demo"].remote is True
+        assert places["demo"].connection == "R2Test"
+        assert places["demo"].transport == "s3"
+
+    def test_the_vault_is_what_this_server_owns_not_what_sources_hold(
+        self, db_session, make_model, make_file, make_external_library, tmp_path
+    ):
+        library = make_external_library(tmp_path / "external")
+        before = inventory(db_session)
+        make_file(
+            make_model(), external=True, external_library_id=library.id, size_bytes=700
+        )
+
+        after = inventory(db_session)
+        vault = next(place for place in after.locations if place.kind == "vault")
+
+        assert (
+            vault.logical_bytes == after.unique_owned_bytes == before.unique_owned_bytes
+        )
+        assert vault.remote is False
+
+    def test_a_source_with_nothing_indexed_still_has_a_place(
+        self, db_session, make_external_library, tmp_path
+    ):
+        make_external_library(tmp_path / "empty", name="Empty source")
+
+        places = {place.label: place for place in inventory(db_session).locations}
+
+        assert places["Empty source"].logical_bytes == 0
+        assert places["Empty source"].count == 0
+
+    def test_trashed_files_do_not_count_toward_a_source(
+        self, db_session, make_model, make_file, make_external_library, tmp_path
+    ):
+        library = make_external_library(tmp_path / "external", name="Trash test")
+        make_file(
+            make_model(trashed=True),
+            external=True,
+            external_library_id=library.id,
+            size_bytes=400,
+        )
+
+        places = {place.label: place for place in inventory(db_session).locations}
+
+        assert places["Trash test"].logical_bytes == 0
 
     def test_counts_shared_key_once(self, db_session, make_model, make_file):
         backend = get_backend()

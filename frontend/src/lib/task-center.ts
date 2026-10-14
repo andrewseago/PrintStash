@@ -103,6 +103,8 @@ export interface TaskItem {
   archiveTransferredBytes?: number;
   archiveSpeedBytesPerSecond?: number;
   archiveEtaSeconds?: number;
+  /** Mirrors work the server does by itself; never kept across a reload. */
+  ambient?: boolean;
 }
 
 export function needsArchiveReview(task: TaskItem): boolean {
@@ -212,7 +214,9 @@ function loadTasks(): TaskItem[] {
     // snapshot; a hand-edited or truncated value falls through to the catch.
     if (!ownsPersistedTasks()) return [];
     const parsed: TaskItem[] | null = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    return Array.isArray(parsed) ? keepVisibleTasks(parsed).map(recoverTaskAfterReload) : [];
+    return Array.isArray(parsed)
+      ? keepVisibleTasks(parsed.filter((task) => !task.ambient)).map(recoverTaskAfterReload)
+      : [];
   } catch {
     return [];
   }
@@ -556,6 +560,15 @@ function detailForJob(job: Pick<JobStatus, "state"> & Partial<JobStatus>): strin
       default:
         throw new Error(`invalid_backup_stage:${job.stage}`);
     }
+  }
+  if (job.kind === "sources.scan" && job.stage === "discovering") {
+    return uiText(
+      "Listing the remote source · {found} files found · {where} · continues in background",
+      {
+        found: job.processed ?? 0,
+        where: job.current_item ?? "",
+      },
+    );
   }
   const stage = knownUiText(job.stage ?? (job.state === "queued" ? "pending" : job.state));
   const count = job.total == null ? "" : ` ${job.processed ?? 0}/${job.total}`;

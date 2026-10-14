@@ -546,6 +546,7 @@ export interface JobStatus {
   result: IngestJobResult | null;
   stage:
     | "resolving"
+    | "discovering"
     | "downloading"
     | "inspecting"
     | "extracting"

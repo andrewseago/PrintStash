@@ -164,6 +164,7 @@ function MetricCell({
 function ModelCardInner({
   model,
   origin,
+  arriving = false,
   collectionLabel,
   metrics,
   selectable = false,
@@ -175,6 +176,8 @@ function ModelCardInner({
 }: {
   model: ModelListItem;
   origin?: LibraryEntry;
+  /** Turned up in the open view since it was last read: ease in once. */
+  arriving?: boolean;
   collectionLabel?: string | null;
   metrics: CardMetrics;
   selectable?: boolean;
@@ -220,7 +223,7 @@ function ModelCardInner({
             : undefined
         }
         onDragEnd={() => setDragging(false)}
-        className={`${origin ? "" : "animate-card-in"} group relative flex h-full flex-col bg-card border rounded transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-fast active:scale-[0.99] overflow-hidden ${
+        className={`${origin ? "" : "animate-card-in"} ${arriving ? "animate-card-arrive" : ""} group relative flex h-full flex-col bg-card border rounded transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-fast active:scale-[0.99] overflow-hidden ${
           draggable ? "cursor-grab active:cursor-grabbing" : ""
         } ${dragging ? "opacity-40" : ""} ${
           selected
@@ -404,6 +407,7 @@ const ModelCardMemo = memo(ModelCardInner);
 export function ModelCard({
   model,
   origin,
+  arriving,
   collectionLabel,
   selectable,
   selected,
@@ -414,6 +418,7 @@ export function ModelCard({
 }: {
   model: ModelListItem;
   origin?: LibraryEntry;
+  arriving?: boolean;
   collectionLabel?: string | null;
   selectable?: boolean;
   selected?: boolean;
@@ -441,6 +446,7 @@ export function ModelCard({
     <Localized>
       <ModelCardMemo
         origin={origin}
+        arriving={arriving}
         model={model}
         collectionLabel={collectionLabel}
         metrics={metrics}

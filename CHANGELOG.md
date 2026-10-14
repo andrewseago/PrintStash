@@ -2,6 +2,105 @@
 
 ## Unreleased
 
+- Deleted models can be selected in Settings, Trash: tick several (or all) and
+  restore or permanently delete them in one step.
+
+- Large slicer 3MF files get a 3D view. A 20 MB Bambu Studio 3MF holds over
+  100 MB of model XML, which hit a fixed 64 MB limit and showed "3D preview
+  omitted due to memory limits". The limit is now `VAULT_MESH_3MF_MAX_XML_MB`
+  (256 by default). A model with more triangles than the memory budget allows
+  still needs `VAULT_MESH_MEMORY_BUDGET_FRACTION` raised; see `docs/compute.md`.
+
+- There is a single PrintStash image, and it can use the GPU. The separate GPU
+  image variants are gone: the one image on GHCR uses an NVIDIA, Intel or AMD
+  GPU, or the WSL2 GPU, whenever the container is handed one, and runs on the
+  CPU otherwise. Docker Compose, Unraid and the other app stores can now pass a
+  GPU and set the GPU and system memory budgets
+  (`VAULT_COMPUTE_MEMORY_MB`, `VAULT_MESH_MEMORY_BUDGET_FRACTION`,
+  `VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION`); see `docs/compute.md`.
+
+- A model's 3D view opens straight away, even for a large mesh; the
+  "Load 3D preview" button is gone from the model page.
+
+- The library loads the next page as you scroll, so there is no "Load more"
+  button to press. Loading starts a little before you reach the end, shows a
+  spinner while it reads, and the button only comes back if a read fails or the
+  browser cannot watch scrolling.
+
+- Storage insights now show where your files live: the vault on this computer,
+  and each library source with its type and connection, with the total held on
+  this computer apart from what sits in remote storage such as R2. Library
+  sources stay where they are, so only their previews and catalog count against
+  the vault.
+
+- Thumbnail and 3D-view generation now shows in Tasks. After an import or a scan,
+  administrators see one "Preparing previews" task counting what is left, which
+  completes when the queue empties instead of the work being invisible.
+
+- The library no longer asks you to refresh when it changes. In a view that is a
+  single page, a new Model or folder eases in where it belongs and a change in
+  another folder only updates the counts; the notice remains only deeper in a
+  long list, where reloading every page read so far would move your place.
+  Changes are noticed within about ten seconds.
+
+- A 3D preview that cannot be made now says why. A model over the preview size
+  limit, a file that is not a valid 3D model, a STEP file that will not convert
+  and a source that cannot be read each have their own message, instead of
+  "Something went wrong reaching the server".
+
+- A scan of a remote source reports its progress while it lists the bucket: the
+  task shows how many files it has found and which folder it is in, instead of
+  a bare "running" for minutes.
+
+- **Filters work in a folder that only holds folders.** The filter options and
+  their counts now describe the whole folder tree below you, and applying a
+  filter searches that tree, so the root of a library no longer offers nothing
+  to filter. An unfiltered folder still lists only its own Models. Print
+  history and Uploaded now look and behave like the other filter groups.
+
+- A remote scan that finds no model file now says so on the source card, naming
+  where it looked (S3 paths are case-sensitive) and linking to the connection,
+  instead of ending quietly at "+0 added".
+
+- Library sources can be edited. Each source card has an Edit button to rename
+  it and change how it maps to collections. A mounted folder can be pointed at
+  another folder, and a remote source at another path inside its connection
+  while it has indexed nothing. A remote source now shows its connection and the bucket or
+  host it reads (for example `R2Test · test/PrintStash/`) instead of the
+  internal `source://1/`.
+
+- Applying a filter no longer rebuilds the collection tree. Its rows stay put,
+  the counts dim while they reload, and each count that changes ticks toward
+  its new value.
+
+- Picking a filter value no longer hides the other values of its group, so you
+  can add a second file type (or any other value) without clearing the first.
+  While a filter is on, the view lists the matching Models only, without the
+  open folder's subfolders beside them.
+
+- Starring a Model, or regenerating covers, no longer shows "The library has
+  changed" on every open library. Only edits that can change a listing do.
+  Reloading reopens the path to the open folder and the six folders you opened
+  last, not every folder of the session.
+
+- Cards now ease in one after another when you open a folder, even when
+  everything is already cached.
+
+- **Settings → GPU shows what the server can reach.** Administrators get a
+  Server GPU card saying whether a GPU is accessible from the API, with its
+  device, backend, driver, memory budget, capabilities and recent activity, or
+  the reason there is none.
+
+- Saving a collection description no longer reloads the collection tree or the
+  library, and the Tags, Upload and New multipart set dialogs no longer open on
+  an empty frame the first time: their code is fetched once the library is
+  usable.
+
+- Opening a folder now has a little motion. Its contents ease in from the right
+  when you go deeper and from the left when you go back up, and fade in when
+  you jump somewhere unrelated. It is a short, small nudge that keeps scroll
+  positions intact, and reduced motion keeps only the fade.
+
 - **Models first, then thumbnails.** While an upload, an import or a library
   scan is still adding Models, thumbnails and other derived previews wait; they
   start as soon as the last one finishes. A large import shows all its Models

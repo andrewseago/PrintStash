@@ -1,6 +1,7 @@
 /** Real-browser acceptance of coherent Library snapshots and private retirement. */
 import { expect, test, type Page } from "@playwright/test";
 import { useMockApi } from "./_setup";
+import { scrollToEnd } from "./_scroll";
 import {
   aCollectionNode,
   aCollectionPage,
@@ -273,7 +274,7 @@ test.describe("Library snapshots", () => {
     await expectSnapshot(page, "A");
     await visitRecent(page, "C");
     await expectSnapshot(page, "C");
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await scrollToEnd(page);
     await late.started.promise;
     await page.getByRole("button", { name: /tester/ }).click();
     await page.getByRole("menuitem", { name: "Log out", exact: true }).click();
@@ -328,7 +329,7 @@ test.describe("Library snapshots", () => {
     await expectSnapshot(page, "A");
     await visitRecent(page, "C");
     await expectSnapshot(page, "C");
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await scrollToEnd(page);
     await late.started.promise;
     api.state.denied = true;
     await page.clock.fastForward(31_000);

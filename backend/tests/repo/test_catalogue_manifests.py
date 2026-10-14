@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 import yaml
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.modules.administration import setup_policy
 from app.schemas.setup import SetupRequest
 from tests.paths import REPO_ROOT
@@ -95,6 +95,37 @@ class TestEveryCatalogue:
         ]
 
         assert "/data" in targets, "without /data every restart starts empty"
+
+    @pytest.mark.parametrize("store", STORES, ids=str)
+    def test_ships_compute_budgets_the_settings_accept(
+        self, store: str
+    ) -> None:
+        env = _environment(store)
+
+        resolved = Settings(
+            compute_mode=env["VAULT_COMPUTE_MODE"],
+            compute_memory_mb=int(env["VAULT_COMPUTE_MEMORY_MB"]),
+            mesh_memory_budget_fraction=float(env["VAULT_MESH_MEMORY_BUDGET_FRACTION"]),
+            embedding_memory_budget_fraction=float(
+                env["VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION"]
+            ),
+        )
+
+        assert resolved.compute_mode == "auto"
+
+    def test_describes_the_casaos_budgets_in_the_install_dialog(self) -> None:
+        described = {
+            item["container"]
+            for item in _load(MAIN_SERVICES["casaos"][0])["services"]["printstash"][
+                "x-casaos"
+            ]["envs"]
+        }
+
+        assert {
+            "VAULT_COMPUTE_MEMORY_MB",
+            "VAULT_MESH_MEMORY_BUDGET_FRACTION",
+            "VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION",
+        } <= described
 
     @pytest.mark.parametrize("store", ALWAYS_PROVISIONED, ids=str)
     def test_creates_the_owner_from_the_environment_where_it_is_always_supplied(

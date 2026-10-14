@@ -85,6 +85,43 @@ describe("DerivativeStatus", () => {
     ).toBeVisible();
   });
 
+  it("says a model is too large to preview instead of blaming the network", async () => {
+    renderStatus(
+      stubApi([
+        aDerivative({
+          kind: "viewer_stl",
+          state: "failed",
+          failure_reason: "resource_limit",
+          retryable: true,
+        }),
+      ]),
+    );
+
+    expect(await screen.findByText(/too large to preview/)).toBeVisible();
+    expect(screen.queryByText(/reaching the server/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["scene_resource_limit", /too large to preview/],
+    ["invalid_3mf", /could not be read as a valid 3D model/],
+    ["tessellation_failed", /could not be converted to a mesh/],
+    ["source_unavailable", /storage is reachable/],
+  ])("explains the %s failure", async (reason, message) => {
+    renderStatus(
+      stubApi([
+        aDerivative({
+          kind: "viewer_stl",
+          state: "failed",
+          failure_reason: reason,
+          retryable: false,
+        }),
+      ]),
+    );
+
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.queryByText(/reaching the server/)).not.toBeInTheDocument();
+  });
+
   it("lets an editor retry a failed output", async () => {
     const user = userEvent.setup();
     const api = stubApi([FAILED]);

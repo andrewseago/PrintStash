@@ -337,6 +337,8 @@ export interface ExternalLibraryScanSummary {
   errors: string[];
   error: string | null;
   aborted: boolean;
+  /** A finished remote scan that saw no model file at all (empty or wrong folder). */
+  no_files_found?: boolean;
 }
 
 export interface ExternalLibrary extends EditingBase {
@@ -385,6 +387,7 @@ export interface ExternalLibraryCreate {
 export interface ExternalLibraryUpdate {
   name?: string;
   root_path?: string;
+  source_prefix?: string;
   enabled?: boolean;
   scan_schedule?: string;
   watch_mode?: ExternalLibraryWatchMode;

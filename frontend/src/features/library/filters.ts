@@ -138,6 +138,16 @@ export function readLibraryFilters(
   return { filters, structured, baseFilters, params };
 }
 
+/** Whether any filter besides the folder and the text query narrows the library.
+ *  Such a filter spans the open folder's whole subtree: a folder that holds only
+ *  subfolders has nothing of its own to filter, and a filter that could never
+ *  match here would be useless. */
+export function narrowsLibrary(base: Omit<ListModelsParams, "limit" | "offset">): boolean {
+  return Object.values(base).some(
+    (value) => value !== undefined && !(Array.isArray(value) && value.length === 0),
+  );
+}
+
 /** Library bookmarks use type + explicit date-desc; Search has another contract. */
 export function writeLibraryFilters(
   filters: SavedViewFilters,

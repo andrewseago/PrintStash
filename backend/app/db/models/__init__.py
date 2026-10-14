@@ -13,6 +13,7 @@ from app.db import (
 from app.db import (
     library_authorization_v2 as _library_authorization_v2,  # noqa: F401, E402
 )
+from app.db import library_browse_v2 as _library_browse_v2  # noqa: F401, E402
 from app.db import library_contracts_v1 as _library_contracts_v1  # noqa: F401, E402
 from app.db import (
     notification_edit_contracts_v1 as _notification_edit_contracts_v1,  # noqa: F401, E402

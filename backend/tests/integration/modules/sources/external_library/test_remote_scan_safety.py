@@ -6,6 +6,7 @@ import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from sqlmodel import Session, select
@@ -22,7 +23,9 @@ from app.db.models import (
 from app.modules.library import trash
 from app.modules.sources import external_library
 from app.modules.sources.library_source import SourceContent, SourceEntry, SourcePage
+from app.modules.sources.remote_discovery import progress_reporter
 from app.modules.work.jobs import jobs
+from app.schemas.jobs import JobStage
 from tests.factories import build_file, build_model
 from tests.factories.ops import build_job, build_job_context
 from tests.paths import FIXTURES_DIR
@@ -434,6 +437,109 @@ class TestRemoteScanSafety:
 
         assert result["complete"] is True
         assert jobs.get("completed-job").state is JobState.COMPLETED
+
+    def test_a_long_listing_tells_the_job_what_it_has_found(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-progress")
+
+        class _Reporting(_Source):
+            def list_page(self, prefix, *, cursor, limit):
+                report = progress_reporter()
+                assert report is not None
+                report(1200, 7, "models/sub")
+                return super().list_page(prefix, cursor=cursor, limit=limit)
+
+        class _Recording:
+            def __init__(self, inner) -> None:
+                self.inner = inner
+                self.updates: list[dict] = []
+
+            def update(self, **fields) -> None:
+                self.updates.append(fields)
+                self.inner.update(**fields)
+
+            def __getattr__(self, name):
+                return getattr(self.inner, name)
+
+        monkeypatch.setattr(
+            external_library,
+            "source_for_library",
+            lambda _lib: _Reporting(SourcePage((), None, True, metadata_ops=1)),
+        )
+        build_job(
+            db_session,
+            kind=JobKind.SOURCES_SCAN,
+            id="progress-job",
+            subject=f"library/{library.id}",
+        )
+        context = _Recording(build_job_context("progress-job"))
+
+        external_library.scan_remote_library(library.id, job_context=context)
+
+        assert {
+            "stage": "discovering",
+            "processed": 1200,
+            "current_item": "models/sub · 7 folders",
+        } in context.updates
+        # The stage is part of the closed Job vocabulary, so a reader can load it.
+        assert "discovering" in get_args(JobStage)
+
+    def test_a_scan_that_finds_no_model_file_says_so(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-nothing-found")
+        source = _Source(SourcePage((), None, True, metadata_ops=1))
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["no_files_found"] is True
+        assert result["added"] == 0
+
+    def test_a_listing_with_only_unsupported_files_also_finds_no_model(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-only-text")
+        source = _Source(
+            SourcePage(
+                (SourceEntry("models/readme.txt", 10),), None, True, metadata_ops=1
+            )
+        )
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["no_files_found"] is True
+
+    def test_a_scan_that_indexes_a_model_does_not_claim_the_source_is_empty(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-found")
+        path = FIXTURES_DIR / "sample.gcode"
+        source = _Source(
+            SourcePage(
+                (SourceEntry("models/sample.gcode", path.stat().st_size),),
+                None,
+                True,
+                metadata_ops=1,
+            ),
+            path,
+        )
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["added"] == 1
+        assert result["no_files_found"] is False
 
     def test_incomplete_epoch_never_marks_unseen_catalog_rows_absent(
         self,

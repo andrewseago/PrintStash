@@ -1,10 +1,13 @@
+import { FilterGroup } from "@/components/filter-group";
+import { Input } from "@/components/ui/input";
 import { PrintHistoryFields } from "@/components/print-history-fields";
 import { historyKeys } from "@/lib/search-filters";
 import type { SavedViewFilters } from "@/types";
+import { FILTER_INPUT } from "@/lib/filter-input";
 import { filterValueText } from "@/lib/filter-labels";
 import { uiText } from "@/lib/locale";
 import { useUiLocale } from "@/lib/i18n";
-import { ChevronDown, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useState } from "react";
 
 import { Checkbox } from "@/components/ui/checkbox";
@@ -102,6 +105,9 @@ export function StructuredFilters({
 }) {
   useUiLocale();
   const [open, setOpen] = useState<Partial<Record<FilterKey, boolean>>>({});
+  const [extraOpen, setExtraOpen] = useState<{ history?: boolean; uploaded?: boolean }>({});
+  const historyActive = historyKeys.some((key) => history[key] != null && history[key] !== "");
+  const uploadedActive = !!uploadedAfter || !!uploadedBefore;
 
   function toggleGroup(key: FilterKey) {
     setOpen((current) => ({ ...current, [key]: !(current[key] ?? !!active[key]?.length) }));
@@ -176,89 +182,86 @@ export function StructuredFilters({
             const contentId = `model-filter-${key}`;
             if (values.length === 0 && selected.length === 0) return null;
             return (
-              <div key={key}>
-                <button
-                  type="button"
-                  aria-expanded={isOpen}
-                  aria-controls={contentId}
-                  onClick={() => toggleGroup(key)}
-                  className="flex w-full items-center gap-1 rounded px-2 py-1.5 text-left text-sm font-medium text-foreground transition-[background-color,color,transform] duration-press hover:bg-muted active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ChevronDown
-                    className={`h-4 w-4 text-muted-foreground transition-transform duration-press ${isOpen ? "" : "-rotate-90"}`}
-                  />
-                  <span className="flex-1">{label}</span>
-                  {selected.length > 0 && (
-                    <span className="rounded-full bg-accent px-1.5 text-3xs text-accent-foreground">
-                      {selected.length}
-                    </span>
-                  )}
-                </button>
-                {isOpen && (
-                  <div
-                    id={contentId}
-                    className="ml-4 space-y-0.5 border-l border-border py-0.5 pl-3"
+              <FilterGroup
+                key={key}
+                id={contentId}
+                label={label}
+                count={selected.length}
+                open={isOpen}
+                onToggle={() => toggleGroup(key)}
+              >
+                {values.map((item) => (
+                  <label
+                    key={item.value}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors duration-press hover:bg-muted"
                   >
-                    {values.map((item) => (
-                      <label
-                        key={item.value}
-                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors duration-press hover:bg-muted"
-                      >
-                        <Checkbox
-                          className="h-4 w-4"
-                          checked={selected.includes(item.value)}
-                          onChange={() => toggleValue(key, item.value)}
-                        />
-                        <span className="min-w-0 flex-1 truncate capitalize">
-                          {filterValueText(key, item.value)}
-                        </span>
-                        <span className="min-w-[18px] rounded bg-muted px-1 py-0.5 text-center text-2xs font-medium text-muted-foreground">
-                          {item.count}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    <Checkbox
+                      className="h-4 w-4"
+                      checked={selected.includes(item.value)}
+                      onChange={() => toggleValue(key, item.value)}
+                    />
+                    <span className="min-w-0 flex-1 truncate capitalize">
+                      {filterValueText(key, item.value)}
+                    </span>
+                    <span className="min-w-[18px] rounded bg-muted px-1 py-0.5 text-center text-2xs font-medium text-muted-foreground">
+                      {item.count}
+                    </span>
+                  </label>
+                ))}
+              </FilterGroup>
             );
           })}
-          <details
-            className="px-2 py-3"
-            open={historyKeys.some((key) => history[key] != null && history[key] !== "")}
+          <FilterGroup
+            id="model-filter-history"
+            label={uiText("Print history")}
+            count={historyKeys.filter((key) => history[key] != null && history[key] !== "").length}
+            open={extraOpen.history ?? historyActive}
+            onToggle={() =>
+              setExtraOpen((current) => ({
+                ...current,
+                history: !(current.history ?? historyActive),
+              }))
+            }
           >
-            <summary className="cursor-pointer text-sm font-medium">
-              {uiText("Print history")}
-            </summary>
             <PrintHistoryFields
+              compact
               value={history}
               onChange={(key, value) => onDateChange?.(key, value)}
             />
-          </details>
-          <details className="pt-1" open={!!uploadedAfter || !!uploadedBefore}>
-            <summary className="cursor-pointer px-2 py-1.5 text-sm font-medium text-foreground">
-              {uiText("Uploaded")}
-            </summary>
-            <div className="grid grid-cols-2 gap-2 px-2 pb-1">
-              <label className="text-3xs text-muted-foreground">
+          </FilterGroup>
+          <FilterGroup
+            id="model-filter-uploaded"
+            label={uiText("Uploaded")}
+            count={(uploadedAfter ? 1 : 0) + (uploadedBefore ? 1 : 0)}
+            open={extraOpen.uploaded ?? uploadedActive}
+            onToggle={() =>
+              setExtraOpen((current) => ({
+                ...current,
+                uploaded: !(current.uploaded ?? uploadedActive),
+              }))
+            }
+          >
+            <div className="grid gap-2 py-1">
+              <label className="space-y-1 text-xs text-muted-foreground">
                 {uiText("After")}
-                <input
+                <Input
                   type="date"
                   value={uploadedAfter ?? ""}
                   onChange={(event) => onDateChange?.("uploaded_after", event.target.value)}
-                  className="mt-1 w-full rounded border border-input bg-background px-1 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className={FILTER_INPUT}
                 />
               </label>
-              <label className="text-3xs text-muted-foreground">
+              <label className="space-y-1 text-xs text-muted-foreground">
                 {uiText("Before")}
-                <input
+                <Input
                   type="date"
                   value={uploadedBefore ?? ""}
                   onChange={(event) => onDateChange?.("uploaded_before", event.target.value)}
-                  className="mt-1 w-full rounded border border-input bg-background px-1 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  className={FILTER_INPUT}
                 />
               </label>
             </div>
-          </details>
+          </FilterGroup>
         </div>
       </section>
     </Localized>

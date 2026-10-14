@@ -1,5 +1,12 @@
 "use client";
 
+import { arrivingKeys, entryKeys } from "@/lib/library-arrivals";
+import {
+  FOLDER_CARDS_CLASS,
+  FOLDER_MOVE_CLASS,
+  folderMove,
+  type FolderMove,
+} from "@/lib/folder-transition";
 import { useLibraryNavigationReads } from "@/features/library/navigation-reads";
 import { useTaxonomyCommands } from "@/features/library/taxonomy";
 
@@ -32,6 +39,7 @@ import {
   readLibraryFilters,
   writeLibraryFilters,
   effectiveLibraryView,
+  narrowsLibrary,
   sameLibraryFilters,
   structuredLibraryFilterKeys as STRUCTURED_FILTER_KEYS,
   type StructuredLibraryFilterKey as StructuredFilterKey,
@@ -146,19 +154,36 @@ import { ProtectedThumbnail } from "@/components/protected-thumbnail";
 import { useStartupThumbnails } from "@/lib/use-startup-thumbnails";
 import { useThumbnailArrivals } from "@/lib/use-thumbnail-arrivals";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 import { TabBar } from "@/components/ui/tabs";
 
-const UploadModal = lazyImport(() =>
-  import("@/components/upload-modal").then((module) => ({ default: module.UploadModal })),
-);
-const ModelTagsDialog = lazyImport(() =>
-  import("@/components/model-tags-dialog").then((module) => ({ default: module.ModelTagsDialog })),
-);
-const NewMultipartModelModal = lazyImport(() =>
+const loadUploadModal = () =>
+  import("@/components/upload-modal").then((module) => ({ default: module.UploadModal }));
+const loadModelTagsDialog = () =>
+  import("@/components/model-tags-dialog").then((module) => ({ default: module.ModelTagsDialog }));
+const loadNewMultipartModelModal = () =>
   import("@/components/new-multipart-model-modal").then((module) => ({
     default: module.NewMultipartModelModal,
-  })),
-);
+  }));
+const UploadModal = lazyImport(loadUploadModal);
+const ModelTagsDialog = lazyImport(loadModelTagsDialog);
+const NewMultipartModelModal = lazyImport(loadNewMultipartModelModal);
+
+/** Fetch the dialog chunks once the library is usable, so the first click opens
+ *  a dialog instead of an empty frame while its code downloads. */
+function useDialogPreload(ready: boolean) {
+  useEffect(() => {
+    if (!ready) return;
+    const load = () => {
+      // A failed warm-up changes nothing: opening the dialog retries the import.
+      for (const loader of [loadModelTagsDialog, loadUploadModal, loadNewMultipartModelModal])
+        void loader().catch(() => undefined);
+    };
+    // Late enough not to compete with the first thumbnails, early enough to be warm.
+    const handle = setTimeout(load, 1500);
+    return () => clearTimeout(handle);
+  }, [ready]);
+}
 
 type SortKey = ModelSort;
 type ViewMode = "grid" | "list";
@@ -838,12 +863,18 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   ): ModelListFilters => ({
     ...baseFilters,
     collection: collection ?? undefined,
-    // A search spans the whole library; a folder view lists only its direct
-    // children so subfolders' models don't leak into the parent (#30).
-    direct: !searchQuery,
+    // A search or a filter spans the whole subtree; an unfiltered folder view
+    // lists only its direct children so subfolders' models don't leak into
+    // the parent (#30).
+    direct: !searchQuery && !narrowsLibrary(baseFilters),
     q: searchQuery,
   });
-  const facetQuery = useModelFacets(folderModelFilters(), { enabled: filtersEnabled });
+  // Options and counts describe the whole subtree, so a folder that holds only
+  // subfolders still offers every filter that would match inside it.
+  const facetQuery = useModelFacets(
+    { ...folderModelFilters(), direct: false },
+    { enabled: filtersEnabled },
+  );
 
   function writeFilterUrl(filters: SavedViewRead["filters"]) {
     const params = writeLibraryFilters(filters, canViewPrinters);
@@ -977,6 +1008,10 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       ) ?? [],
     [modelQuery.data],
   );
+  // A filter lists matching Models from the whole subtree, so the open folder's
+  // subfolders are not part of that result: showing them beside it mixes a
+  // place to browse with a list of matches.
+  const foldersHidden = narrowsLibrary(baseFilters);
   // Commit one coherent browsing result. Independent requests may settle in any
   // order; neither placeholder models nor a cached root folder page belongs to
   // a destination whose lookup/children have not completed yet.
@@ -986,20 +1021,23 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       entry,
       items: orderedItems,
       modelPages: modelQuery.data?.pages.length ?? 0,
-      folderPages: folderPages.data?.pages.length ?? 0,
-      collections: folderPages.data?.pages.flatMap((page) => page.items) ?? [],
+      folderPages: foldersHidden ? 0 : (folderPages.data?.pages.length ?? 0),
+      collections: foldersHidden
+        ? []
+        : (folderPages.data?.pages.flatMap((page) => page.items) ?? []),
       collection: selectedCollectionRow,
       breadcrumbs:
         selectedCollectionRow && selectedLookup.data
           ? [...selectedLookup.data.ancestors, selectedCollectionRow]
           : [],
       hasMore: modelQuery.hasNextPage ?? false,
-      moreFolders: folderPages.hasNextPage ?? false,
+      moreFolders: foldersHidden ? false : (folderPages.hasNextPage ?? false),
     };
   }, [
     browseReady,
     entry,
     orderedItems,
+    foldersHidden,
     folderPages.data,
     folderPages.hasNextPage,
     selectedCollectionRow,
@@ -1011,6 +1049,19 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   if (nextSnapshot !== null && nextSnapshot !== settledSnapshot) setSettledSnapshot(nextSnapshot);
   const snapshot = currentRefresh?.status === "denied" ? null : (nextSnapshot ?? settledSnapshot);
   const displayedCollection = snapshot?.collection ?? null;
+  // `null` until the first snapshot lands: opening a folder by URL is arriving,
+  // not moving, so the first settled folder must not animate.
+  const displayedPath = snapshot === null ? null : (displayedCollection?.path ?? "");
+  const [folderEntrance, setFolderEntrance] = useState<{
+    path: string | null;
+    move: FolderMove | null;
+  }>({ path: displayedPath, move: null });
+  if (displayedPath !== null && folderEntrance.path !== displayedPath) {
+    setFolderEntrance({
+      path: displayedPath,
+      move: folderEntrance.path === null ? null : folderMove(folderEntrance.path, displayedPath),
+    });
+  }
   const onAuthorityRetired = useCallback(() => {
     const session = getSessionVersion();
     void refreshAuth().catch((error) => {
@@ -1047,6 +1098,62 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   const loadingMore = modelQuery.isFetchingNextPage || !browseReady;
   const hasMore = snapshot?.hasMore ?? false;
 
+  const [selectMode, setSelectMode] = useState(false);
+
+  // What turned up since this view was last read eases in once; everything
+  // already on screen keeps its place. A different folder starts a new reading.
+  const shownKeys = entryKeys(visibleCollections, libraryItems);
+  const [arrival, setArrival] = useState<{
+    path: string | null;
+    keys: ReadonlySet<string>;
+    arriving: ReadonlySet<string>;
+  }>({ path: displayedPath, keys: new Set(shownKeys), arriving: new Set() });
+  if (displayedPath !== null) {
+    if (arrival.path !== displayedPath) {
+      setArrival({ path: displayedPath, keys: new Set(shownKeys), arriving: new Set() });
+    } else if (
+      shownKeys.length !== arrival.keys.size ||
+      shownKeys.some((key) => !arrival.keys.has(key))
+    ) {
+      setArrival({
+        path: displayedPath,
+        keys: new Set(shownKeys),
+        arriving: arrivingKeys(arrival.keys, shownKeys),
+      });
+    }
+  }
+
+  // A change to the library applies by itself while the view is a single page:
+  // new Models ease in where they belong and a change elsewhere only moves the
+  // counts. Deeper in the list the notice stays, since reloading every page
+  // read so far on each change would move the place being read.
+  const settlesByItself =
+    authority.refreshRequired &&
+    !modelQuery.refreshRequired &&
+    currentRefresh === null &&
+    !selectMode &&
+    (snapshot?.modelPages ?? 0) <= 1 &&
+    (snapshot?.folderPages ?? 0) <= 1;
+  const lastSettled = useRef(0);
+  // The timer must survive re-renders, so it reads the latest refresh through a
+  // ref instead of depending on an object that is new on every render.
+  const settleNow = useRef<() => void>(() => undefined);
+  useLayoutEffect(() => {
+    settleNow.current = () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outliner });
+      void authority.refresh();
+    };
+  });
+  useEffect(() => {
+    if (!settlesByItself) return;
+    const wait = Math.max(800, lastSettled.current + 4000 - Date.now());
+    const timer = setTimeout(() => {
+      lastSettled.current = Date.now();
+      settleNow.current();
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [settlesByItself]);
+
   useEffect(() => {
     if (browseReady) settleStartup("cards", "ready");
     else if (error !== null) settleStartup("cards", "failed");
@@ -1070,7 +1177,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       },
       folders: {
         count: snapshot?.folderPages ?? 0,
-        more: folderPages.hasNextPage ?? false,
+        more: foldersHidden ? false : (folderPages.hasNextPage ?? false),
         pending: folderPages.isFetching,
         failed: folderPages.isError,
         next: () => void folderPages.fetchNextPage({ cancelRefetch: false }),
@@ -1185,7 +1292,6 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   // survives load-more and search; backend per-model RBAC makes cross-collection
   // selections safe. We clear it when navigating folders (see below) so a hidden
   // off-screen selection doesn't linger.
-  const [selectMode, setSelectMode] = useState(false);
   const showLibraryTools = libraryToolsOpen;
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -1660,6 +1766,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
     startup.complete && browseReady && !refreshing,
   );
   const warmModel = useModelOpenIntent(startup.complete && browseReady && !refreshing);
+  useDialogPreload(startup.complete && browseReady);
   const canAdminSelectedCollection =
     user?.is_superuser || selectedCollectionRow?.effective_role === "admin";
   // Whether there is anywhere this reader may upload to, without listing it.
@@ -2480,9 +2587,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   entityLabel={displayedCollection.name}
                   tags={displayedCollection.tags}
                   availableTags={tags}
-                  canEdit={
-                    browseReady && (!!user?.is_superuser || canWriteCollection(displayedCollection))
-                  }
+                  canEdit={!!user?.is_superuser || canWriteCollection(displayedCollection)}
                   help={uiText(
                     "Collection tags are inherited by Models in this collection and every descendant for search and filtering.",
                   )}
@@ -2492,9 +2597,8 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   key={displayedCollection.id}
                   collectionId={displayedCollection.id}
                   hasReadme={displayedCollection.has_readme}
-                  canEdit={
-                    browseReady && (!!user?.is_superuser || canWriteCollection(displayedCollection))
-                  }
+                  canEdit={!!user?.is_superuser || canWriteCollection(displayedCollection)}
+                  disabled={!browseReady}
                 />
               </div>
             )
@@ -2746,7 +2850,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   {uiText("library.readingPositionReset")}
                 </p>
               )}
-              {refreshRequired && (
+              {refreshRequired && !settlesByItself && (
                 <div
                   role="status"
                   className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-md border border-border bg-muted p-3 text-sm"
@@ -2864,14 +2968,18 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   className="flex-1 py-20"
                 />
               ) : viewMode === "grid" ? (
-                <div key="grid" className={compact ? "p-3" : "p-4 sm:p-6"}>
+                <div
+                  key={`grid:${folderEntrance.path ?? ""}`}
+                  className={compact ? "p-3" : "p-4 sm:p-6"}
+                >
                   <div
-                    className={`grid grid-cols-1 ${compact ? "gap-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,260px))]" : "gap-4 sm:grid-cols-[repeat(auto-fill,minmax(340px,340px))]"}`}
+                    className={`${folderEntrance.move ? FOLDER_CARDS_CLASS[folderEntrance.move] : ""} grid grid-cols-1 ${compact ? "gap-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,260px))]" : "gap-4 sm:grid-cols-[repeat(auto-fill,minmax(340px,340px))]"}`}
                   >
                     {visibleCollections.map((collection) => (
                       <CollectionFolderCard
                         key={collection.id}
                         collection={collection}
+                        arriving={arrival.arriving.has(`c:${collection.id}`)}
                         onSelect={handleCollectionChange}
                         onIntent={prefetchFolder}
                         onDropModel={canUploadToVault ? handleMoveModel : undefined}
@@ -2885,6 +2993,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                         <MultipartModelCard
                           key={`multipart-${item.value.id}`}
                           item={item.value}
+                          arriving={arrival.arriving.has(`p:${item.value.id}`)}
                           collectionLabel={item.value.collection_label}
                           returnTo={currentLibraryHref}
                           origin={snapshot?.entry}
@@ -2896,6 +3005,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                           key={item.value.id}
                           model={item.value}
                           origin={snapshot?.entry}
+                          arriving={arrival.arriving.has(`m:${item.value.id}`)}
                           collectionLabel={item.value.collection_label}
                           selectable={selectMode}
                           selected={selectedIds.has(item.value.id)}
@@ -2910,6 +3020,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={snapshot?.moreFolders ?? false}
                     loading={fetchingFolders || currentRefresh !== null}
+                    failed={folderPages.isFetchNextPageError}
                     onClick={() => {
                       if (currentRefresh === null) void fetchMoreFolders();
                     }}
@@ -2918,11 +3029,16 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={hasMore && !refreshRequired}
                     loading={loadingMore}
+                    failed={modelQuery.isFetchNextPageError}
                     onClick={loadMore}
                   />
                 </div>
               ) : (
-                <div key="list" ref={listContent} className="flex-1 overflow-y-auto">
+                <div
+                  key={`list:${folderEntrance.path ?? ""}`}
+                  ref={listContent}
+                  className={`${folderEntrance.move ? FOLDER_MOVE_CLASS[folderEntrance.move] : ""} flex-1 overflow-y-auto`}
+                >
                   <div className="flex flex-col">
                     <div className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs font-mono text-muted-foreground uppercase tracking-wider bg-muted/50">
                       <span className="w-10 flex-shrink-0">{uiText("Thumb")}</span>
@@ -2949,6 +3065,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                     <LoadMore
                       hasMore={snapshot?.moreFolders ?? false}
                       loading={fetchingFolders || currentRefresh !== null}
+                      failed={folderPages.isFetchNextPageError}
                       onClick={() => {
                         if (currentRefresh === null) void fetchMoreFolders();
                       }}
@@ -2980,6 +3097,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   <LoadMore
                     hasMore={hasMore && !refreshRequired}
                     loading={loadingMore}
+                    failed={modelQuery.isFetchNextPageError}
                     onClick={loadMore}
                   />
                 </div>
@@ -3073,6 +3191,7 @@ function useModelDropTarget(path: string, onDropModel?: (source: ModelDrag, path
 
 function CollectionFolderCard({
   collection,
+  arriving = false,
   onSelect,
   onIntent,
   onDropModel,
@@ -3081,6 +3200,7 @@ function CollectionFolderCard({
   onToggleSelect,
 }: {
   collection: CollectionRead;
+  arriving?: boolean;
   onSelect: (path: string) => void;
   /** The user is about to open this folder (hover or focus): warm its data. */
   onIntent?: (path: string | null) => void;
@@ -3111,7 +3231,7 @@ function CollectionFolderCard({
           }
         }}
         {...handlers}
-        className={`group flex flex-col text-left bg-muted border rounded-lg hover:shadow-sm transition-[border-color,box-shadow,transform] duration-fast active:scale-[0.99] relative overflow-hidden ${
+        className={`${arriving ? "animate-card-arrive" : ""} group flex flex-col text-left bg-muted border rounded-lg hover:shadow-sm transition-[border-color,box-shadow,transform] duration-fast active:scale-[0.99] relative overflow-hidden ${
           selected
             ? "border-primary bg-accent"
             : dragOver
@@ -3378,19 +3498,64 @@ function ModelListRow({
   );
 }
 
+/**
+ * The next page of a view loads as the list is scrolled toward its end, so
+ * there is no button to press. A sentinel reaching up 600px above the end of the
+ * list starts the read before the reader gets there. The button remains only
+ * where it must: a browser that cannot observe scrolling, or after a read
+ * failed, since a sentinel still in view would otherwise retry without end.
+ */
 function LoadMore({
   hasMore,
   loading,
+  failed = false,
   onClick,
   folders = false,
 }: {
   hasMore: boolean;
   loading: boolean;
+  failed?: boolean;
   onClick: () => void;
   folders?: boolean;
 }) {
   useUiLocale();
+  const sentinel = useRef<HTMLDivElement>(null);
+  const load = useRef(onClick);
+  useLayoutEffect(() => {
+    load.current = onClick;
+  });
+  const automatic = "IntersectionObserver" in globalThis && !failed;
+  useEffect(() => {
+    const element = sentinel.current;
+    if (!automatic || !hasMore || loading || element === null) return;
+    // Observing reports the current state at once, so a list shorter than the
+    // reach keeps loading until it fills it.
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) load.current();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [automatic, hasMore, loading]);
   if (!hasMore) return null;
+  if (automatic) {
+    return (
+      <Localized>
+        <div className="relative pb-6">
+          <div
+            ref={sentinel}
+            data-load-more-sentinel
+            aria-hidden
+            className="pointer-events-none absolute bottom-0 h-[600px] w-full"
+          />
+          {loading && (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          )}
+        </div>
+      </Localized>
+    );
+  }
   return (
     <Localized>
       <div className="flex justify-center mt-6 pb-6">
