@@ -419,13 +419,11 @@ describe("ExternalLibrariesPanel", () => {
 
     it("warns when a finished scan found no model file, naming where it looked", async () => {
       renderPanel({
-        list: vi
-          .fn<() => Promise<ExternalLibrary[]>>()
-          .mockResolvedValue([
-            aRemoteSource({
-              last_scan_summary: aSummary({ added: 0, updated: 0, no_files_found: true }),
-            }),
-          ]),
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([
+          aRemoteSource({
+            last_scan_summary: aSummary({ added: 0, updated: 0, no_files_found: true }),
+          }),
+        ]),
         listConnections: vi
           .fn<ExternalLibrariesApi["listConnections"]>()
           .mockResolvedValue(connections),
@@ -455,6 +453,54 @@ describe("ExternalLibrariesPanel", () => {
       await screen.findByText("demo");
 
       expect(screen.queryByText(/No model files found/)).toBeNull();
+    });
+
+    it("moves a remote source to another folder of its connection", async () => {
+      const user = userEvent.setup();
+      const { api } = renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.type(
+        within(dialog).getByRole("textbox", { name: "Source path within connection" }),
+        "thingi10k",
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+      await waitFor(() =>
+        expect(api.update).toHaveBeenCalledWith(
+          7,
+          { source_prefix: "thingi10k" },
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        ),
+      );
+    });
+
+    it("shows the connection's base apart from the source's own folder", async () => {
+      const user = userEvent.setup();
+      renderPanel({
+        list: vi
+          .fn<() => Promise<ExternalLibrary[]>>()
+          .mockResolvedValue([aRemoteSource({ source_prefix: "models" })]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      expect(await screen.findByText("R2Test · test/PrintStash/models/")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+
+      expect(within(dialog).getByText("R2Test · test/PrintStash/")).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("textbox", { name: "Source path within connection" }),
+      ).toHaveValue("models");
     });
 
     it("links a remote source's dialog to its connection", async () => {

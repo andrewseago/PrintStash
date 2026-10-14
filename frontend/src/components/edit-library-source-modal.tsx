@@ -40,12 +40,15 @@ export function EditLibrarySourceModal({
   const [name, setName] = useState(source.name);
   const [folder, setFolder] = useState(source.root_path);
   const [layout, setLayout] = useState(source.collection_mode);
+  const [path, setPath] = useState(source.source_prefix ?? "");
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     const payload: ExternalLibraryUpdate = {};
     if (name.trim() !== source.name) payload.name = name.trim();
     if (mounted && folder.trim() !== source.root_path) payload.root_path = folder.trim();
+    if (!mounted && path.trim() !== (source.source_prefix ?? ""))
+      payload.source_prefix = path.trim();
     if (layout !== source.collection_mode) payload.collection_mode = layout;
     if (Object.keys(payload).length > 0) onSave(payload);
     onClose();
@@ -76,20 +79,36 @@ export function EditLibrarySourceModal({
             </span>
           </label>
         ) : (
-          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            {uiText("Remote location")}
-            <p className="rounded border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-foreground break-all">
-              {location}
-            </p>
-            <span className="text-2xs">
-              {uiText(
-                "To change the remote folder, edit its connection in Settings → Remote storage.",
-              )}{" "}
-              <Link href="/settings?section=remote-storage" className="font-medium underline">
-                {uiText("Edit connection")}
-              </Link>
-            </span>
-          </div>
+          <>
+            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {uiText("Remote location")}
+              <p className="rounded border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-foreground break-all">
+                {location}
+              </p>
+              <span className="text-2xs">
+                {uiText(
+                  "The connection's bucket and base folder are set in Settings → Remote storage.",
+                )}{" "}
+                <Link href="/settings?section=remote-storage" className="font-medium underline">
+                  {uiText("Edit connection")}
+                </Link>
+              </span>
+            </div>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              {uiText("Path within connection (optional)")}
+              <Input
+                value={path}
+                placeholder={uiText("e.g. production/models")}
+                onChange={(event) => setPath(event.target.value)}
+                aria-label={uiText("Source path within connection")}
+              />
+              <span className="text-2xs">
+                {uiText(
+                  "A source that already indexed files cannot change folder: remove it (your files stay untouched) and add it again.",
+                )}
+              </span>
+            </label>
+          </>
         )}
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           {uiText("Collection layout")}

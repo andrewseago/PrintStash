@@ -31,10 +31,13 @@ from app.core.time import utcnow
 from app.db.models import (
     Collection,
     ExternalLibrary,
+    ExternalLibraryCheckpoint,
     File,
     JobKind,
     JobState,
+    LibrarySourceKind,
     Model,
+    StorageConnectionPurpose,
 )
 from app.db.scopes import live
 from app.modules.administration import runtime_config
@@ -42,7 +45,13 @@ from app.modules.sources import external_library
 from app.modules.storage import root_markers
 from app.modules.work.jobs import jobs
 from tests._env import use_local_storage
-from tests.factories import build_collection, build_external_library
+from tests.factories import (
+    build_collection,
+    build_external_library,
+    build_file,
+    build_model,
+    build_storage_connection,
+)
 from tests.paths import FIXTURES_DIR
 
 FIXTURE_GCODE = FIXTURES_DIR / "sample.gcode"
@@ -351,6 +360,147 @@ class TestUpdateLibrary:
         assert body["target_collection_id"] == target.id
         assert body["binding_state"] == "unbound"
         assert body["root_enrollable"] is True
+
+
+class TestRemoteSourceFolder:
+    def _remote(self, session: Session, **overrides) -> ExternalLibrary:
+        connection = build_storage_connection(
+            session, purpose=StorageConnectionPurpose.LIBRARY
+        )
+        return build_external_library(
+            session,
+            f"source://{connection.id}/",
+            source_kind=LibrarySourceKind.S3,
+            connection_id=connection.id,
+            source_prefix="",
+            watch_mode="off",
+            **overrides,
+        )
+
+    def test_a_source_that_indexed_nothing_can_move_to_another_folder(
+        self, client, db_session: Session, auth_headers: dict
+    ) -> None:
+        _enable_feature(db_session)
+        lib = self._remote(db_session)
+
+        resp = client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": "/thingi10k/"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["source_prefix"] == "thingi10k"
+        assert body["root_path"] == f"source://{lib.connection_id}/thingi10k"
+        assert body["last_scan_summary"] is None
+
+    def test_a_stale_scan_cursor_does_not_follow_the_source_to_its_new_folder(
+        self, client, db_session: Session, auth_headers: dict
+    ) -> None:
+        _enable_feature(db_session)
+        lib = self._remote(db_session)
+        db_session.add(
+            ExternalLibraryCheckpoint(
+                library_id=lib.id, epoch="old", cursor="old-cursor"
+            )
+        )
+        db_session.commit()
+
+        client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": "other"},
+        )
+
+        db_session.expire_all()
+        assert (
+            db_session.exec(
+                select(ExternalLibraryCheckpoint).where(
+                    ExternalLibraryCheckpoint.library_id == lib.id
+                )
+            ).first()
+            is None
+        )
+
+    def test_a_source_with_indexed_files_cannot_move(
+        self, client, db_session: Session, auth_headers: dict
+    ) -> None:
+        _enable_feature(db_session)
+        lib = self._remote(db_session)
+        model = build_model(db_session, "indexed")
+        build_file(
+            db_session,
+            model,
+            filename="a.stl",
+            external=True,
+            external_library_id=lib.id,
+            source_key="a.stl",
+        )
+
+        resp = client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": "elsewhere"},
+        )
+
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "library_source_prefix_has_files"
+        db_session.refresh(lib)
+        assert lib.source_prefix == ""
+
+    def test_the_same_folder_is_not_a_change(
+        self, client, db_session: Session, auth_headers: dict
+    ) -> None:
+        _enable_feature(db_session)
+        lib = self._remote(db_session)
+        build_file(
+            db_session,
+            build_model(db_session, "indexed"),
+            filename="a.stl",
+            external=True,
+            external_library_id=lib.id,
+            source_key="a.stl",
+        )
+
+        resp = client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": "/"},
+        )
+
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.parametrize("prefix", ["../up", "a/../b", "a//b"])
+    def test_a_traversing_folder_is_refused(
+        self, client, db_session: Session, auth_headers: dict, prefix: str
+    ) -> None:
+        _enable_feature(db_session)
+        lib = self._remote(db_session)
+
+        resp = client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": prefix},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "library_source_prefix_invalid"
+
+    def test_a_mounted_source_has_no_remote_folder(
+        self, tmp_path: Path, client, db_session: Session, auth_headers: dict
+    ) -> None:
+        _enable_feature(db_session)
+        lib = build_external_library(db_session, tmp_path, name="nas")
+
+        resp = client.patch(
+            f"/api/v1/libraries/{lib.id}",
+            headers=auth_headers,
+            json={"source_prefix": "x"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "library_source_prefix_remote_only"
 
 
 class TestRootEnrollment:

@@ -387,6 +387,7 @@ export interface ExternalLibraryCreate {
 export interface ExternalLibraryUpdate {
   name?: string;
   root_path?: string;
+  source_prefix?: string;
   enabled?: boolean;
   scan_schedule?: string;
   watch_mode?: ExternalLibraryWatchMode;

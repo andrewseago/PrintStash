@@ -1286,7 +1286,7 @@ function AdminLibrarySourcesPanel({
           <EditLibrarySourceModal
             key={editTarget.id}
             source={editTarget}
-            location={describeSourceLocation(editTarget, connections)}
+            location={describeSourceLocation({ ...editTarget, source_prefix: "" }, connections)}
             disabled={!commandsAllowed || command.blocked || busyId !== null}
             onSave={(payload) => void handleUpdate(editTarget, payload)}
             onClose={() => setEditTarget(null)}

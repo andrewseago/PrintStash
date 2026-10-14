@@ -4350,7 +4350,11 @@
   "Edit source": "Editar origen",
   "Remote location": "Ubicación remota",
   "A new folder has to be verified again before it is scanned.": "Una carpeta nueva debe verificarse de nuevo antes de escanearse.",
-  "To change the remote folder, edit its connection in Settings → Remote storage.": "Para cambiar la carpeta remota, edita su conexión en Ajustes → Remote storage.",
   "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.": "No se encontraron archivos de modelos en {value1}. Revisa el nombre de la carpeta: las rutas remotas distinguen mayúsculas.",
-  "Edit connection": "Editar conexión"
+  "Edit connection": "Editar conexión",
+  "The connection's bucket and base folder are set in Settings → Remote storage.": "El bucket y la carpeta base de la conexión se definen en Ajustes → Remote storage.",
+  "A source that already indexed files cannot change folder: remove it (your files stay untouched) and add it again.": "Un origen que ya indexó archivos no puede cambiar de carpeta: quítalo (tus archivos no se tocan) y añádelo de nuevo.",
+  "library_source_prefix_has_files": "Este origen ya indexó archivos de su carpeta actual. Quítalo (tus archivos no se tocan) y añádelo de nuevo para leer otra carpeta.",
+  "library_source_prefix_invalid": "La ruta no puede contener partes vacías, \".\" ni \"..\".",
+  "library_source_prefix_remote_only": "Solo los orígenes remotos tienen una ruta dentro de una conexión."
 }

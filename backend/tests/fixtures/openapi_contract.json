@@ -8390,6 +8390,19 @@
             ],
             "title": "Scan Schedule"
           },
+          "source_prefix": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Folder inside a remote source's connection; empty reads the whole root.",
+            "title": "Source Prefix"
+          },
           "target_collection_id": {
             "anyOf": [
               {
