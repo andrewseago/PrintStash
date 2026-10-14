@@ -132,6 +132,32 @@ test.describe("motion and layering", () => {
     });
   }
 
+  test("the card entrance is large enough to be noticed on cached content", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    const card = page.locator(".folder-cards-forward > *").first();
+    await expect(card).toBeVisible();
+
+    const entrance = await card.evaluate((node) => {
+      const keyframes = Array.from(document.styleSheets)
+        .flatMap((sheet) => Array.from(sheet.cssRules))
+        .filter(
+          (rule): rule is CSSKeyframesRule =>
+            rule instanceof CSSKeyframesRule && rule.name === "folder-in-forward",
+        );
+      return {
+        duration: getComputedStyle(node).animationDuration,
+        keyframes: keyframes.map((rule) => rule.cssText).join(" "),
+      };
+    });
+    expect(entrance.duration).toBe("0.3s");
+    expect(entrance.keyframes).toContain("translateX(24px)");
+  });
+
   test("a folder whose cards are already cached still animates them in on a revisit", async ({
     page,
   }) => {
