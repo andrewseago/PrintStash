@@ -35,7 +35,9 @@ import {
   type ApiKeyReceipt,
 } from "@/lib/queries/settings-account";
 import { savedPreference, useSettingsPreferenceCommand } from "@/lib/queries/settings-preferences";
+import { GpuServerStatus } from "@/components/gpu-server-status";
 import {
+  settingsComputeOptions,
   settingsHealthOptions,
   settingsReleaseOptions,
   settingsSystemKeys,
@@ -495,6 +497,10 @@ export function SettingsPanel() {
     }
   }, [activeSection, user?.is_superuser]);
   const client = useQueryClient();
+  const computeRead = useQuery({
+    ...settingsComputeOptions(),
+    enabled: !!user?.is_superuser && activeSection === "gpu",
+  });
   const healthRead = useQuery({ ...settingsHealthOptions(), enabled: !!user?.is_superuser });
   const releaseRead = useQuery({ ...settingsReleaseOptions(), enabled: !!user?.is_superuser });
   const health =
@@ -4360,6 +4366,25 @@ export function SettingsPanel() {
 
             {activeSection === "gpu" && (
               <div className="space-y-6 animate-panel-in">
+                {user?.is_superuser && (
+                  <SettingsCard
+                    icon={Server}
+                    title={t("gpu.server.title")}
+                    description={t("gpu.server.description")}
+                    action={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        loading={computeRead.isFetching && !computeRead.isPending}
+                        onClick={() => void computeRead.refetch()}
+                      >
+                        {t("gpu.server.refresh")}
+                      </Button>
+                    }
+                  >
+                    <GpuServerStatus read={computeRead} />
+                  </SettingsCard>
+                )}
                 <SettingsCard
                   icon={Gpu}
                   title={uiText("3D rendering")}

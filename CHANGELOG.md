@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Settings → GPU shows what the server can reach.** Administrators get a
+  Server GPU card saying whether a GPU is accessible from the API, with its
+  device, backend, driver, memory budget, capabilities and recent activity, or
+  the reason there is none.
+
+- Saving a collection description no longer reloads the collection tree or the
+  library, and the Tags, Upload and New multipart set dialogs no longer open on
+  an empty frame the first time: their code is fetched once the library is
+  usable.
+
 - Opening a folder now has a little motion. Its contents ease in from the right
   when you go deeper and from the left when you go back up, and fade in when
   you jump somewhere unrelated. It is a short, small nudge that keeps scroll

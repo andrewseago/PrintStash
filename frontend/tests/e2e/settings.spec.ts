@@ -36,6 +36,42 @@ test.describe("settings route", () => {
     expect(stale.status()).toBe(412);
     expect((await (await request.get("/api/v1/config")).json()).currency).toBe("EUR");
   });
+  test("the GPU section tells an administrator whether the API can reach a GPU", async ({
+    page,
+  }) => {
+    await page.route("**/api/v1/system/compute", (route) =>
+      route.fulfill({
+        json: {
+          mode: "auto",
+          device: {
+            identity: "gpu-0",
+            name: "NVIDIA GeForce RTX 4070",
+            vendor_id: 4318,
+            device_id: 10118,
+            driver: "560.35.03",
+            backend: "Vulkan",
+          },
+          capabilities: [
+            { operation: "render", available: true, reason: "ready" },
+            { operation: "dense", available: false, reason: "unqualified" },
+            { operation: "sparse", available: false, reason: "unqualified" },
+          ],
+          budget_bytes: 1073741824,
+          reserved_bytes: 268435456,
+          resident_entries: 2,
+          queue_depth: 1,
+          completed: 42,
+          fallbacks: 3,
+          cold_start_seconds: 1.2,
+        },
+      }),
+    );
+    await page.goto("/settings?section=gpu");
+    const card = page.getByRole("group", { name: "Server GPU" });
+    await expect(card.getByText("GPU accessible from the API")).toBeVisible();
+    await expect(card.getByText("NVIDIA GeForce RTX 4070")).toBeVisible();
+    await expect(card.getByText("256 MB of 1 GB in use")).toBeVisible();
+  });
   test("persists a conditional preference in the browser fake", async ({ page }) => {
     await page.goto("/settings?section=design");
     const input = page.getByLabel("Display currency");

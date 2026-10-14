@@ -1,3 +1,4 @@
+import type { ComputeStatus } from "@/types/system";
 import type { GcPlan } from "@/lib/api/gc";
 import type { TrashedModelRead } from "@/types";
 import type { VolumeMeasurement } from "@/types/models";
@@ -1007,5 +1008,32 @@ export function aGcPlan(override?: Partial<GcPlan>): GcPlan {
     last_error: null,
     items: [],
     ...override,
+  };
+}
+
+export function aComputeStatus(overrides: Partial<ComputeStatus> = {}): ComputeStatus {
+  return {
+    mode: "auto",
+    device: {
+      identity: "gpu-0",
+      name: "NVIDIA GeForce RTX 4070",
+      vendor_id: 0x10de,
+      device_id: 0x2786,
+      driver: "560.35.03",
+      backend: "Vulkan",
+    },
+    capabilities: [
+      { operation: "render", available: true, reason: "ready" },
+      { operation: "dense", available: false, reason: "unqualified" },
+      { operation: "sparse", available: false, reason: "unqualified" },
+    ],
+    budget_bytes: 1024 * 1024 * 1024,
+    reserved_bytes: 256 * 1024 * 1024,
+    resident_entries: 2,
+    queue_depth: 1,
+    completed: 42,
+    fallbacks: 3,
+    cold_start_seconds: 1.2,
+    ...overrides,
   };
 }
