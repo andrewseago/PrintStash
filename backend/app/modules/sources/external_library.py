@@ -67,6 +67,7 @@ from app.modules.sources.library_source import (
 from app.modules.sources.library_source import (
     timestamp as source_timestamp,
 )
+from app.modules.sources.remote_discovery import report_progress
 from app.modules.storage.filesystem import FsKind, detect_fs_kind
 from app.modules.storage.hashing import sha256_file
 from app.modules.storage.root_markers import (
@@ -737,6 +738,25 @@ def _remote_checkpoint(
     return checkpoint
 
 
+def _discovery_reporter(job_context: JobContext | None):
+    """Tell the Job what a long listing has found, at most once a second."""
+    last = 0.0
+
+    def report(found: int, listed: int, folder: str) -> None:
+        nonlocal last
+        now = monotonic()
+        if job_context is None or now - last < 1.0:
+            return
+        last = now
+        job_context.update(
+            stage="discovering",
+            processed=found,
+            current_item=f"{folder or '/'} · {listed} folders",
+        )
+
+    return report
+
+
 def scan_remote_library(
     library_id: int,
     *,
@@ -777,11 +797,12 @@ def scan_remote_library(
             try:
                 if monotonic() - scan_started >= _REMOTE_SLICE_MAX_SECONDS:
                     raise LibrarySourceError("remote_scan_slice_deadline")
-                page = source.list_page(
-                    library.source_prefix,
-                    cursor=checkpoint.cursor,
-                    limit=_REMOTE_PAGE_LIMIT,
-                )
+                with report_progress(_discovery_reporter(job_context)):
+                    page = source.list_page(
+                        library.source_prefix,
+                        cursor=checkpoint.cursor,
+                        limit=_REMOTE_PAGE_LIMIT,
+                    )
                 selected: list[SourceEntry] = []
                 bytes_in_slice = 0
                 consumed = 0

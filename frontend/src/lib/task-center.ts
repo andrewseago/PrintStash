@@ -557,6 +557,15 @@ function detailForJob(job: Pick<JobStatus, "state"> & Partial<JobStatus>): strin
         throw new Error(`invalid_backup_stage:${job.stage}`);
     }
   }
+  if (job.kind === "sources.scan" && job.stage === "discovering") {
+    return uiText(
+      "Listing the remote source · {found} files found · {where} · continues in background",
+      {
+        found: job.processed ?? 0,
+        where: job.current_item ?? "",
+      },
+    );
+  }
   const stage = knownUiText(job.stage ?? (job.state === "queued" ? "pending" : job.state));
   const count = job.total == null ? "" : ` ${job.processed ?? 0}/${job.total}`;
   const item = job.current_item ? ` · ${job.current_item}` : "";

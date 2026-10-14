@@ -553,6 +553,31 @@ describe("groupUploadJobs", () => {
     });
   });
 
+  it("tells a remote scan's listing what it has found so far", async () => {
+    const taskId = tc.createTask({ title: "Scan Demo", expectedJobCount: 1 });
+    tc.linkTaskToJob(taskId, "scan-job");
+    listJobs.mockResolvedValue([
+      aJob({
+        job_id: "scan-job",
+        kind: "sources.scan",
+        state: "running",
+        stage: "discovering",
+        processed: 1200,
+        total: null,
+        current_item: "thingi10k/part · 7 folders",
+        model_id: null,
+        file_id: null,
+        error: null,
+      }),
+    ]);
+
+    await tc.syncImportJobs();
+
+    expect(tc.listTasks()[0].detail).toBe(
+      "Listing the remote source · 1200 files found · thingi10k/part · 7 folders · continues in background",
+    );
+  });
+
   it("keeps unknown grouped progress pending", async () => {
     const taskId = tc.createTask({ title: "Upload Benchy", expectedJobCount: 2 });
     tc.linkTaskToJob(taskId, "mesh-job");

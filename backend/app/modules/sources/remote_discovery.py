@@ -10,10 +10,13 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from pathlib import PurePosixPath
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlmodel import col, select
 
 from app.core.time import ensure_utc, utcnow
@@ -31,6 +34,27 @@ from app.modules.storage.remote_deadline import operation_timeout
 from app.modules.storage.storage_ownership import provider_ref_for_backend
 
 BATCH_SIZE = 1000
+
+# Called after each folder is listed with (files found, folders listed, the
+# folder just listed). A long listing otherwise says nothing until it ends.
+DiscoveryProgress = Callable[[int, int, str], None]
+_progress: ContextVar[DiscoveryProgress | None] = ContextVar(
+    "remote_discovery_progress", default=None
+)
+
+
+@contextmanager
+def report_progress(callback: DiscoveryProgress) -> Iterator[None]:
+    """Receive progress from every listing started inside this block."""
+    token = _progress.set(callback)
+    try:
+        yield
+    finally:
+        _progress.reset(token)
+
+
+def progress_reporter() -> DiscoveryProgress | None:
+    return _progress.get()
 
 
 def key_hash(value: str) -> str:
@@ -114,6 +138,22 @@ def inventory_page(backend, prefix: str, *, cursor: str | None, limit: int, pace
             )
             session.commit()
         initial_operations = inventory.metadata_ops
+        report = progress_reporter()
+        found = listed = 0
+        if report is not None:
+            found = session.exec(
+                select(func.count())
+                .select_from(Entry)
+                .where(col(Entry.inventory_id) == inventory.id)
+            ).one()
+            listed = session.exec(
+                select(func.count())
+                .select_from(Directory)
+                .where(
+                    col(Directory.inventory_id) == inventory.id,
+                    col(Directory.complete) == True,  # noqa: E712
+                )
+            ).one()
         try:
             while not inventory.complete:
                 operation_timeout()
@@ -142,6 +182,7 @@ def inventory_page(backend, prefix: str, *, cursor: str | None, limit: int, pace
                 )
                 session.commit()
                 files, children = [], []
+                files_here = 0
                 inventory.metadata_ops += 1
                 with backend.iter_directory(directory.path) as observations:
                     for observation in observations:
@@ -170,6 +211,7 @@ def inventory_page(backend, prefix: str, *, cursor: str | None, limit: int, pace
                         else:
                             if observation.size < 0:
                                 raise LibrarySourceError("library_source_size_invalid")
+                            files_here += 1
                             files.append(
                                 dict(
                                     inventory_id=inventory.id,
@@ -206,6 +248,10 @@ def inventory_page(backend, prefix: str, *, cursor: str | None, limit: int, pace
                 session.add(directory)
                 session.add(inventory)
                 session.commit()
+                found += files_here
+                listed += 1
+                if report is not None:
+                    report(found, listed, directory.path)
                 pace(inventory.metadata_ops - initial_operations)
         except BaseException as exc:
             session.rollback()

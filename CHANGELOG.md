@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A 3D preview that cannot be made now says why. A model over the preview size
+  limit, a file that is not a valid 3D model, a STEP file that will not convert
+  and a source that cannot be read each have their own message, instead of
+  "Something went wrong reaching the server".
+
+- A scan of a remote source reports its progress while it lists the bucket: the
+  task shows how many files it has found and which folder it is in, instead of
+  a bare "running" for minutes.
+
 - **Filters work in a folder that only holds folders.** The filter options and
   their counts now describe the whole folder tree below you, and applying a
   filter searches that tree, so the root of a library no longer offers nothing
