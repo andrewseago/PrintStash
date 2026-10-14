@@ -4396,5 +4396,7 @@
   "Mounted folder": "Mounted folder",
   "{transport} · {connection}": "{transport} · {connection}",
   "{count} files read in place": "{count} files read in place",
-  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Library sources stay where they are. Their previews and catalog are kept in the vault."
+  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Library sources stay where they are. Their previews and catalog are kept in the vault.",
+  "On this computer": "On this computer",
+  "In remote storage": "In remote storage"
 }

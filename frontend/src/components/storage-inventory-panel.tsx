@@ -57,6 +57,43 @@ function capacityBytes(value: number | null, locale: string): string {
   return bytes(value, locale);
 }
 
+/** This computer against remote storage: two figures and one proportional bar. */
+function PlacesSplit({ here, remote, locale }: { here: number; remote: number; locale: string }) {
+  const { t } = useI18n();
+  const total = Math.max(1, here + remote);
+  return (
+    <div className="mt-3">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-foreground/75" aria-hidden />
+            {t("On this computer")}
+          </span>
+          <strong className="text-xl font-semibold tabular-nums">{bytes(here, locale)}</strong>
+        </div>
+        <div>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-primary/70" aria-hidden />
+            {t("In remote storage")}
+          </span>
+          <strong className="text-xl font-semibold tabular-nums">{bytes(remote, locale)}</strong>
+        </div>
+      </div>
+      <div
+        role="img"
+        aria-label={t("{here} on this computer · {remote} in remote storage", {
+          here: bytes(here, locale),
+          remote: bytes(remote, locale),
+        })}
+        className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-muted"
+      >
+        <span className="h-full bg-foreground/75" style={{ width: `${(here / total) * 100}%` }} />
+        <span className="h-full bg-primary/70" style={{ width: `${(remote / total) * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export function StorageInventoryPanel() {
   const { locale, t } = useI18n();
   const modelPageSize = useMediaQuery("(min-width: 640px)")
@@ -427,12 +464,11 @@ export function StorageInventoryPanel() {
                   {t("Where your files live")}
                 </h3>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("{here} on this computer · {remote} in remote storage", {
-                  here: bytes(bytesByWhere(current.locations).here, locale),
-                  remote: bytes(bytesByWhere(current.locations).remote, locale),
-                })}
-              </p>
+              <PlacesSplit
+                here={bytesByWhere(current.locations).here}
+                remote={bytesByWhere(current.locations).remote}
+                locale={locale}
+              />
               <ul className="mt-4 space-y-3">
                 {current.locations.map((place) => {
                   const kind = placeKind(place);

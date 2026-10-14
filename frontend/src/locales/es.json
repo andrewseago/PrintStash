@@ -4396,5 +4396,7 @@
   "Mounted folder": "Carpeta montada",
   "{transport} · {connection}": "{transport} · {connection}",
   "{count} files read in place": "{count} archivos leídos en su sitio",
-  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Los orígenes de biblioteca se quedan donde están. Sus vistas previas y su catálogo se guardan en la bóveda."
+  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Los orígenes de biblioteca se quedan donde están. Sus vistas previas y su catálogo se guardan en la bóveda.",
+  "On this computer": "En este equipo",
+  "In remote storage": "En almacenamiento remoto"
 }

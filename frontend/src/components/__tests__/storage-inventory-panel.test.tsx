@@ -179,8 +179,12 @@ describe("Storage insights", () => {
 
     const places = await screen.findByRole("region", { name: "Where your files live" });
     expect(
-      within(places).getByText("539 MB on this computer · 5 GB in remote storage"),
+      within(places).getByRole("img", {
+        name: "539 MB on this computer · 5 GB in remote storage",
+      }),
     ).toBeVisible();
+    expect(within(places).getByText("On this computer")).toBeVisible();
+    expect(within(places).getByText("In remote storage")).toBeVisible();
     expect(within(places).getByText("This computer")).toBeVisible();
     expect(within(places).getByText("Mounted folder")).toBeVisible();
     expect(within(places).getByText("S3 · R2Test")).toBeVisible();
