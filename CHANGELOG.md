@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opening a folder now has a little motion. Its contents ease in from the right
+  when you go deeper and from the left when you go back up, and fade in when
+  you jump somewhere unrelated. It is a short, small nudge that keeps scroll
+  positions intact, and reduced motion keeps only the fade.
+
 - **Models first, then thumbnails.** While an upload, an import or a library
   scan is still adding Models, thumbnails and other derived previews wait; they
   start as soon as the last one finishes. A large import shows all its Models

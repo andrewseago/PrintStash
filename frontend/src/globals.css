@@ -294,6 +294,31 @@
   }
 }
 
+/* Folder drill-in / back: the new folder's content arrives from the side the
+   user moved toward (deeper = from the right, up = from the left), so the
+   hierarchy reads spatially. Small offset: this is a hint, not a slide. */
+@keyframes folder-in-forward {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes folder-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Floating panels (suggestion lists, pickers) settle from 97% scale. */
 @keyframes pop-in {
   from {
@@ -368,6 +393,14 @@
     animation: panel-in var(--duration-fast) var(--ease-out) both;
   }
 
+  .folder-in-forward {
+    animation: folder-in-forward var(--duration-fast) var(--ease-out) both;
+  }
+
+  .folder-in-back {
+    animation: folder-in-back var(--duration-fast) var(--ease-out) both;
+  }
+
   /* Entrance stagger for card grids. Children settle 30ms apart so a page reads
      as a sequence instead of one flat block. Capped at ~10: a 60-card page must
      land well inside the 300ms UI budget, so everything past the 10th shares the
@@ -414,6 +447,8 @@
   .slide-in-left,
   .slide-up,
   .pop-in,
+  .folder-in-forward,
+  .folder-in-back,
   .animate-panel-in {
     animation: fade-in var(--duration-fast) ease both;
   }

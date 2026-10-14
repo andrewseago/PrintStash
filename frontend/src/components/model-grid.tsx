@@ -1,5 +1,6 @@
 "use client";
 
+import { FOLDER_MOVE_CLASS, folderMove } from "@/lib/folder-transition";
 import { useLibraryNavigationReads } from "@/features/library/navigation-reads";
 import { useTaxonomyCommands } from "@/features/library/taxonomy";
 
@@ -1011,6 +1012,17 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   if (nextSnapshot !== null && nextSnapshot !== settledSnapshot) setSettledSnapshot(nextSnapshot);
   const snapshot = currentRefresh?.status === "denied" ? null : (nextSnapshot ?? settledSnapshot);
   const displayedCollection = snapshot?.collection ?? null;
+  const displayedPath = displayedCollection?.path ?? "";
+  const [folderEntrance, setFolderEntrance] = useState<{ path: string; className: string }>({
+    path: displayedPath,
+    className: "",
+  });
+  if (folderEntrance.path !== displayedPath) {
+    setFolderEntrance({
+      path: displayedPath,
+      className: FOLDER_MOVE_CLASS[folderMove(folderEntrance.path, displayedPath)],
+    });
+  }
   const onAuthorityRetired = useCallback(() => {
     const session = getSessionVersion();
     void refreshAuth().catch((error) => {
@@ -2861,7 +2873,10 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   className="flex-1 py-20"
                 />
               ) : viewMode === "grid" ? (
-                <div key="grid" className={compact ? "p-3" : "p-4 sm:p-6"}>
+                <div
+                  key={`grid:${folderEntrance.path}`}
+                  className={`${folderEntrance.className} ${compact ? "p-3" : "p-4 sm:p-6"}`}
+                >
                   <div
                     className={`grid grid-cols-1 ${compact ? "gap-2 sm:grid-cols-[repeat(auto-fill,minmax(260px,260px))]" : "gap-4 sm:grid-cols-[repeat(auto-fill,minmax(340px,340px))]"}`}
                   >
@@ -2919,7 +2934,11 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   />
                 </div>
               ) : (
-                <div key="list" ref={listContent} className="flex-1 overflow-y-auto">
+                <div
+                  key={`list:${folderEntrance.path}`}
+                  ref={listContent}
+                  className={`${folderEntrance.className} flex-1 overflow-y-auto`}
+                >
                   <div className="flex flex-col">
                     <div className="flex items-center gap-3 px-4 py-2 border-b border-border text-xs font-mono text-muted-foreground uppercase tracking-wider bg-muted/50">
                       <span className="w-10 flex-shrink-0">{uiText("Thumb")}</span>

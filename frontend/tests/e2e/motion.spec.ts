@@ -81,6 +81,76 @@ test.describe("motion and layering", () => {
     });
   }
 
+  test("an empty folder shows its add-description prompt with its content, not after", async ({
+    page,
+  }) => {
+    await folderWithDescription(page);
+    await page.unroute("**/api/v1/collections/lookup?**");
+    await page.route("**/api/v1/collections/lookup?**", (route) =>
+      route.fulfill({
+        json: {
+          collection: aCollectionNode({ id: 1, name: "maraio", path: "maraio", has_readme: false }),
+          ancestors: [],
+        },
+      }),
+    );
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    const prompt = page.getByRole("button", { name: /Add a description for this collection/ });
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toBeEnabled();
+  });
+
+  for (const [reducedMotion, animation] of [
+    ["no-preference", "folder-in-forward"],
+    ["reduce", "fade-in"],
+  ] as const) {
+    test(`drilling into a folder settles its content in from the right with ${reducedMotion}`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion });
+      await folderWithDescription(page);
+      await page.goto("/");
+      await expect(page.getByRole("heading", { name: "All Models" })).toBeVisible();
+      await expect(page.locator(".folder-in-forward")).toHaveCount(0);
+
+      await page
+        .getByRole("main")
+        .getByRole("button", { name: /maraio/ })
+        .click();
+      await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+
+      const entrance = page.locator(".folder-in-forward");
+      await expect(entrance).toHaveCount(1);
+      expect(await entrance.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+        animation,
+      );
+    });
+  }
+
+  test("climbing back out of a folder settles its parent in from the left", async ({ page }) => {
+    await folderWithDescription(page);
+    await page.goto("/");
+    await page
+      .getByRole("main")
+      .getByRole("button", { name: /maraio/ })
+      .click();
+    await expect(page.getByRole("heading", { name: "Folder model", exact: true })).toBeVisible();
+
+    await page.getByRole("main").getByRole("button", { name: "All Models" }).first().click();
+    await expect(page.getByRole("heading", { name: "Root model", exact: true })).toBeVisible();
+
+    const entrance = page.locator(".folder-in-back");
+    await expect(entrance).toHaveCount(1);
+    expect(await entrance.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+      "folder-in-back",
+    );
+  });
+
   test("folder content waits for its description before replacing the current view", async ({
     page,
   }) => {
