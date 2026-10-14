@@ -13,8 +13,9 @@
   instead of ending quietly at "+0 added".
 
 - Library sources can be edited. Each source card has an Edit button to rename
-  it, change how it maps to collections and, for a mounted folder, point it at
-  another folder. A remote source now shows its connection and the bucket or
+  it and change how it maps to collections. A mounted folder can be pointed at
+  another folder, and a remote source at another path inside its connection
+  while it has indexed nothing. A remote source now shows its connection and the bucket or
   host it reads (for example `R2Test · test/PrintStash/`) instead of the
   internal `source://1/`.
 
