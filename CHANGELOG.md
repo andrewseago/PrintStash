@@ -8,6 +8,11 @@
   to filter. An unfiltered folder still lists only its own Models. Print
   history and Uploaded now look and behave like the other filter groups.
 
+- Picking a filter value no longer hides the other values of its group, so you
+  can add a second file type (or any other value) without clearing the first.
+  While a filter is on, the view lists the matching Models only, without the
+  open folder's subfolders beside them.
+
 - Starring a Model, or regenerating covers, no longer shows "The library has
   changed" on every open library. Only edits that can change a listing do.
   Reloading reopens the path to the open folder and the six folders you opened

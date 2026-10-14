@@ -1006,6 +1006,10 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       ) ?? [],
     [modelQuery.data],
   );
+  // A filter lists matching Models from the whole subtree, so the open folder's
+  // subfolders are not part of that result: showing them beside it mixes a
+  // place to browse with a list of matches.
+  const foldersHidden = narrowsLibrary(baseFilters);
   // Commit one coherent browsing result. Independent requests may settle in any
   // order; neither placeholder models nor a cached root folder page belongs to
   // a destination whose lookup/children have not completed yet.
@@ -1015,20 +1019,23 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       entry,
       items: orderedItems,
       modelPages: modelQuery.data?.pages.length ?? 0,
-      folderPages: folderPages.data?.pages.length ?? 0,
-      collections: folderPages.data?.pages.flatMap((page) => page.items) ?? [],
+      folderPages: foldersHidden ? 0 : (folderPages.data?.pages.length ?? 0),
+      collections: foldersHidden
+        ? []
+        : (folderPages.data?.pages.flatMap((page) => page.items) ?? []),
       collection: selectedCollectionRow,
       breadcrumbs:
         selectedCollectionRow && selectedLookup.data
           ? [...selectedLookup.data.ancestors, selectedCollectionRow]
           : [],
       hasMore: modelQuery.hasNextPage ?? false,
-      moreFolders: folderPages.hasNextPage ?? false,
+      moreFolders: foldersHidden ? false : (folderPages.hasNextPage ?? false),
     };
   }, [
     browseReady,
     entry,
     orderedItems,
+    foldersHidden,
     folderPages.data,
     folderPages.hasNextPage,
     selectedCollectionRow,
@@ -1112,7 +1119,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
       },
       folders: {
         count: snapshot?.folderPages ?? 0,
-        more: folderPages.hasNextPage ?? false,
+        more: foldersHidden ? false : (folderPages.hasNextPage ?? false),
         pending: folderPages.isFetching,
         failed: folderPages.isError,
         next: () => void folderPages.fetchNextPage({ cancelRefetch: false }),

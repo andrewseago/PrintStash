@@ -16,8 +16,22 @@ async function folderOfFolders(page: Page) {
   await page.route("**/api/v1/collections/lookup?**", (route) =>
     route.fulfill({
       json: {
-        collection: aCollectionNode({ id: 1, name: "parent", path: "parent", has_readme: false }),
+        collection: aCollectionNode({
+          id: 1,
+          name: "parent",
+          path: "parent",
+          has_readme: false,
+          child_count: 1,
+        }),
         ancestors: [],
+      },
+    }),
+  );
+  await page.route("**/api/v1/collections/children?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [aCollectionNode({ id: 2, name: "child", path: "parent/child", has_readme: false })],
+        next_cursor: null,
       },
     }),
   );
@@ -86,5 +100,19 @@ test.describe("filters in a folder of folders", () => {
     await expect.poll(() => requests.some((r) => r.kind === "browse" && r.filtered)).toBe(true);
     const filtered = requests.filter((r) => r.kind === "browse" && r.filtered);
     expect(filtered.every((r) => r.direct === null)).toBe(true);
+  });
+
+  test("subfolders are listed until a filter turns the view into a list of matches", async ({
+    page,
+  }) => {
+    await folderOfFolders(page);
+    const childFolder = page.getByRole("main").getByRole("button", { name: /child/ });
+
+    await page.goto("/?c=parent");
+    await expect(childFolder).toBeVisible();
+
+    await page.goto("/?c=parent&file_type=stl");
+    await expect(page.getByRole("heading", { name: "parent", exact: true })).toBeVisible();
+    await expect(childFolder).toHaveCount(0);
   });
 });
