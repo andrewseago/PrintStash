@@ -2,7 +2,7 @@
 
 PrintStash selects execution below existing ingestion, derivative and inference interfaces. Default **auto** placement remains CPU unless an operation has a matching qualification receipt. No receipt or GPU package ships in the minimal CPU installation. Discovery does not enable optional AI features or download assets.
 
-The **gpu-render** extra adds only wgpu for rendering. The optional **gpu** extra supplies [wgpu-py](https://wgpu-py.readthedocs.io/en/latest/backends.html) for rendering and [ONNX Runtime's native WebGPU provider](https://onnxruntime.ai/docs/execution-providers/WebGPU-ExecutionProvider.html) for inference. These use different native implementations. This implementation uses bounded CPU readback, canonical preprocessing and upload between them.
+**One image runs everywhere.** The published image carries the GPU runtime: [wgpu-py](https://wgpu-py.readthedocs.io/en/latest/backends.html) for rendering, [ONNX Runtime's native WebGPU provider](https://onnxruntime.ai/docs/execution-providers/WebGPU-ExecutionProvider.html) for inference, and the Vulkan/Mesa userspace they need. Whether a GPU is used is decided when the container starts, by handing it a device, never by choosing another image; with no device the runtime finds only a software adapter and everything stays on the CPU. In a source install the same runtime is the **gpu** extra (rendering only: **gpu-render**). The two use different native implementations. This implementation uses bounded CPU readback, canonical preprocessing and upload between them.
 
 ## Placement and ownership
 
@@ -45,6 +45,8 @@ Allocation recovery evicts idle entries and makes one bounded inference split. V
 | VAULT_COMPUTE_RENDER_POLICY | qualified | qualified requires measured receipts; preview enables bounded render evaluation for human review |
 | VAULT_COMPUTE_ADAPTER | unset | Exact physical adapter name or diagnostic identity |
 | VAULT_COMPUTE_MEMORY_MB | 1024 | Shared estimated device ceiling, 256–65536 MiB |
+| VAULT_MESH_MEMORY_BUDGET_FRACTION | 0.5 | Share of the host or container RAM native mesh work may reserve, 0–1; this is the *system* budget that thumbnails and geometry draw on, apart from the GPU's |
+| VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION | 0.25 | Share of RAM resident AI models may hold, above 0 and below 1 |
 | VAULT_COMPUTE_BATCH_WAIT_MS | 10 | Background accumulation ceiling, 0–10 ms |
 
 Portable runtimes do not expose dependable free-device-memory information on every deployment. The conservative fallback is 1 GiB; the memory setting is an operator override. Accounting covers a runtime reserve, model/workspace estimates, compact geometry, preparation scratch, upload staging and framebuffer bounds. It is admission control, not protection against allocations by other applications.
@@ -62,13 +64,15 @@ cd backend
 uv sync --frozen --extra full --extra gpu-render
 ~~~
 
-Optional local image:
+Handing a GPU to the container (the same image in every case):
 
-~~~sh
-docker build --build-arg PRINTSTASH_VARIANT=gpu-render -t printstash-api:gpu-render backend
-~~~
+| Host | Compose / `docker run` |
+|---|---|
+| NVIDIA | `--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all` (Compose: `deploy.resources.reservations.devices` with `driver: nvidia`, `capabilities: [gpu, graphics, compute, utility]`) |
+| Intel / AMD (Linux) | `--device /dev/dri --group-add <render group id>` |
+| WSL2 | `--device /dev/dxg -v /usr/lib/wsl:/usr/lib/wsl:ro`; the entrypoint sets the Mesa D3D12 variables itself |
 
-Ordinary full/lite images remain CPU-compatible. GPU image variants add Vulkan and EGL/OpenGL Mesa packages; host drivers and device exposure are still required.
+Handing in a device only makes it visible. Placement still follows the render policy: with the default `qualified` policy an operation stays on the CPU until a qualification receipt matches, and `VAULT_COMPUTE_RENDER_POLICY=preview` lets an operator evaluate it. Settings → GPU shows what the server found and why each operation is or is not placed on it.
 
 Linux AMD/Intel deployments need a hardware Vulkan driver and access to the appropriate /dev/dri/renderD* node through the service UID's groups. NVIDIA containers need the supported [NVIDIA Container Toolkit configuration](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html), including graphics capabilities for Vulkan. A successful nvidia-smi command proves neither Vulkan nor native WebGPU readiness.
 
@@ -77,11 +81,8 @@ In WSL, the application remains in Linux containers and uses the host bridge:
 ~~~sh
 docker run --rm --device /dev/dxg \
   --mount type=bind,src=/usr/lib/wsl,dst=/usr/lib/wsl,readonly \
-  -e LD_LIBRARY_PATH=/usr/lib/wsl/lib \
-  -e GALLIUM_DRIVER=d3d12 -e MESA_LOADER_DRIVER_OVERRIDE=d3d12 \
-  -e XDG_RUNTIME_DIR=/tmp \
   -e VAULT_COMPUTE_RENDER_POLICY=preview \
-  -v printstash-gpu-review:/data -p 8001:8000 printstash-api:gpu-render
+  -v printstash-gpu-review:/data -p 3000:3000 ghcr.io/xiao-villamor/printstash:latest
 ~~~
 
 This example creates a separate evaluation vault. Add the same device/library

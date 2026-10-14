@@ -10,6 +10,23 @@
 # app serves a single request, which is exactly when you want to find out.
 set -e
 
+# WSL2 hands its GPU to a container as /dev/dxg. Mesa reaches it through D3D12
+# with the host's own libraries, which the operator mounts at /usr/lib/wsl, so
+# name them here rather than asking everyone to know the variables. Anything the
+# operator already set wins. With no device nothing is exported: the image is the
+# same on every host, and the GPU is a runtime choice (docs/compute.md).
+if [ -e "${PRINTSTASH_WSL_GPU_DEVICE:-/dev/dxg}" ]; then
+  : "${GALLIUM_DRIVER:=d3d12}"
+  : "${MESA_LOADER_DRIVER_OVERRIDE:=d3d12}"
+  : "${XDG_RUNTIME_DIR:=/tmp}"
+  # The entrypoint runs again after dropping privileges: add the path once.
+  case ":${LD_LIBRARY_PATH:-}:" in
+    *:/usr/lib/wsl/lib:*) ;;
+    *) LD_LIBRARY_PATH="/usr/lib/wsl/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+  esac
+  export GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE XDG_RUNTIME_DIR LD_LIBRARY_PATH
+fi
+
 if [ "${PUID+x}" != x ]; then PUID=10001; fi
 if [ "${PGID+x}" != x ]; then PGID=10001; fi
 

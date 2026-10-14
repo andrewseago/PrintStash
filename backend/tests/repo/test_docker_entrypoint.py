@@ -34,6 +34,17 @@ _PATH_OVERRIDES = frozenset(
 )
 
 
+# A developer's WSL shell already exports these; the GPU tests choose their own.
+_GPU_ENV = frozenset(
+    {
+        "GALLIUM_DRIVER",
+        "MESA_LOADER_DRIVER_OVERRIDE",
+        "XDG_RUNTIME_DIR",
+        "LD_LIBRARY_PATH",
+    }
+)
+
+
 def _write_executable(path: Path, body: str) -> Path:
     path.write_text(body)
     path.chmod(0o755)
@@ -97,6 +108,7 @@ printf 'migration:%s:%s:%s\\n' "$FAKE_UID" "$FAKE_GID" "$*" >> {command_log}
         tmp_path / "server",
         f"""#!/bin/sh
 printf 'server:%s:%s:%s\\n' "$FAKE_UID" "$FAKE_GID" "$*" >> {command_log}
+env > {tmp_path / "server-env.txt"}
 """,
     )
 
@@ -118,7 +130,9 @@ def _run_entrypoint(
     overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
-        key: value for key, value in os.environ.items() if key not in _PATH_OVERRIDES
+        key: value
+        for key, value in os.environ.items()
+        if key not in _PATH_OVERRIDES | _GPU_ENV
     }
     env.pop("VAULT_PROCESS_ROLE", None)
     env.pop("FAKE_READ_ONLY_ROOT", None)
@@ -582,6 +596,95 @@ class TestDockerEntrypointRole:
         _run_entrypoint(script, fake_bin, server, tmp_path=tmp_path, role="worker")
 
         assert log.read_text().splitlines()[-1].startswith("server:10001:10001:")
+
+
+def _server_env(tmp_path: Path) -> dict[str, str]:
+    """The environment the image command was started with."""
+    return dict(
+        line.split("=", 1)
+        for line in (tmp_path / "server-env.txt").read_text().splitlines()
+        if "=" in line
+    )
+
+
+class TestDockerEntrypointGpu:
+    """A WSL GPU is wired up by the image itself; any other host is left alone."""
+
+    def test_a_wsl_gpu_gets_the_mesa_d3d12_setup(self, tmp_path: Path) -> None:
+        device = tmp_path / "dxg"
+        device.touch()
+        script, _log, fake_bin, server = _entrypoint_harness(tmp_path)
+
+        result = _run_entrypoint(
+            script,
+            fake_bin,
+            server,
+            tmp_path=tmp_path,
+            overrides={"PRINTSTASH_WSL_GPU_DEVICE": str(device)},
+        )
+
+        assert result.returncode == 0, result.stderr
+        env = _server_env(tmp_path)
+        assert env["GALLIUM_DRIVER"] == "d3d12"
+        assert env["MESA_LOADER_DRIVER_OVERRIDE"] == "d3d12"
+        assert env["XDG_RUNTIME_DIR"] == "/tmp"
+        assert env["LD_LIBRARY_PATH"].split(":")[0] == "/usr/lib/wsl/lib"
+
+    def test_a_host_without_the_device_exports_nothing(self, tmp_path: Path) -> None:
+        script, _log, fake_bin, server = _entrypoint_harness(tmp_path)
+
+        result = _run_entrypoint(
+            script,
+            fake_bin,
+            server,
+            tmp_path=tmp_path,
+            overrides={"PRINTSTASH_WSL_GPU_DEVICE": str(tmp_path / "missing")},
+        )
+
+        assert result.returncode == 0, result.stderr
+        env = _server_env(tmp_path)
+        assert "GALLIUM_DRIVER" not in env
+        assert "MESA_LOADER_DRIVER_OVERRIDE" not in env
+
+    def test_an_operators_driver_choice_wins(self, tmp_path: Path) -> None:
+        device = tmp_path / "dxg"
+        device.touch()
+        script, _log, fake_bin, server = _entrypoint_harness(tmp_path)
+
+        _run_entrypoint(
+            script,
+            fake_bin,
+            server,
+            tmp_path=tmp_path,
+            overrides={
+                "PRINTSTASH_WSL_GPU_DEVICE": str(device),
+                "GALLIUM_DRIVER": "llvmpipe",
+                "LD_LIBRARY_PATH": "/opt/extra",
+            },
+        )
+
+        env = _server_env(tmp_path)
+        assert env["GALLIUM_DRIVER"] == "llvmpipe"
+
+    def test_the_operators_library_path_is_kept(self, tmp_path: Path) -> None:
+        device = tmp_path / "dxg"
+        device.touch()
+        script, _log, fake_bin, server = _entrypoint_harness(tmp_path)
+
+        _run_entrypoint(
+            script,
+            fake_bin,
+            server,
+            tmp_path=tmp_path,
+            overrides={
+                "PRINTSTASH_WSL_GPU_DEVICE": str(device),
+                "GALLIUM_DRIVER": "llvmpipe",
+                "LD_LIBRARY_PATH": "/opt/extra",
+            },
+        )
+
+        env = _server_env(tmp_path)
+        assert env["LD_LIBRARY_PATH"] == "/usr/lib/wsl/lib:/opt/extra"
 
 
 class TestWorkerBytecode:

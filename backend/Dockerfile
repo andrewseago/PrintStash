@@ -78,36 +78,19 @@ RUN uv sync --frozen --no-dev --no-editable \
 
 FROM dependencies-common AS dependencies-full
 COPY --from=opendal-builder /wheels /tmp/opendal-wheels
+# One image serves every host. The GPU runtime (wgpu, ONNX Runtime's WebGPU
+# provider and the Vulkan/Mesa userspace) is always installed and does nothing
+# until a device is handed to the container: with no device, discovery finds
+# only a software adapter and every operation stays on the CPU. Handing a device
+# in is a runtime choice (see docs/compute.md), never a different image.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-client \
+ && apt-get install -y --no-install-recommends openssh-client libvulkan1 mesa-vulkan-drivers libegl1 libgl1-mesa-dri libglx-mesa0 \
  && rm -rf /var/lib/apt/lists/* \
- && uv sync --frozen --no-dev --no-editable --extra full --no-install-workspace
+ && uv sync --frozen --no-dev --no-editable --extra full --extra gpu --no-install-workspace
 COPY --chmod=0644 packages/printstash-core/src ./packages/printstash-core/src
-RUN uv sync --frozen --no-dev --no-editable --extra full \
+RUN uv sync --frozen --no-dev --no-editable --extra full --extra gpu \
  && uv pip install --reinstall /tmp/opendal-wheels/opendal-0.47.6-*.whl \
- && .venv/bin/python -c 'import opendal; opendal.Operator("s3", bucket="build-check", region="us-east-1", access_key_id="build-check", secret_access_key="build-check", disable_config_load="true", disable_ec2_metadata="true"); opendal.Operator("webdav", endpoint="https://example.invalid", root="/"); opendal.Operator("gdrive", root="/", client_id="build-check", client_secret="build-check", refresh_token="build-check"); import asyncssh' \
- && rm -rf /tmp/opendal-wheels \
- && uv cache clean \
- && rm -rf "$UV_CACHE_DIR"
-
-FROM dependencies-full AS dependencies-gpu-render
-COPY --from=opendal-builder /wheels /tmp/opendal-wheels
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libegl1 libgl1-mesa-dri libglx-mesa0 \
- && rm -rf /var/lib/apt/lists/* \
- && uv sync --frozen --no-dev --no-editable --extra full --extra gpu-render --no-install-package opendal \
- && uv pip install --reinstall /tmp/opendal-wheels/opendal-0.47.6-*.whl \
- && rm -rf /tmp/opendal-wheels \
- && uv cache clean \
- && rm -rf "$UV_CACHE_DIR"
-
-FROM dependencies-full AS dependencies-gpu
-COPY --from=opendal-builder /wheels /tmp/opendal-wheels
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers libegl1 libgl1-mesa-dri libglx-mesa0 \
- && rm -rf /var/lib/apt/lists/* \
- && uv sync --frozen --no-dev --no-editable --extra full --extra gpu --no-install-package opendal \
- && uv pip install --reinstall /tmp/opendal-wheels/opendal-0.47.6-*.whl \
+ && .venv/bin/python -c 'import opendal; opendal.Operator("s3", bucket="build-check", region="us-east-1", access_key_id="build-check", secret_access_key="build-check", disable_config_load="true", disable_ec2_metadata="true"); opendal.Operator("webdav", endpoint="https://example.invalid", root="/"); opendal.Operator("gdrive", root="/", client_id="build-check", client_secret="build-check", refresh_token="build-check"); import asyncssh, wgpu, onnxruntime' \
  && rm -rf /tmp/opendal-wheels \
  && uv cache clean \
  && rm -rf "$UV_CACHE_DIR"

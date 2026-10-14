@@ -62,19 +62,40 @@ services:
         condition: service_healthy
 
   api:
-    # Full image: browser capture + STEP tessellation. For a smaller image
-    # without those, use ghcr.io/xiao-villamor/printstash-api-lite.
+    # Full image: browser capture, STEP tessellation and the GPU runtime. For a
+    # smaller image without those, use ghcr.io/xiao-villamor/printstash-api-lite.
     image: ghcr.io/xiao-villamor/printstash-api:${PRINTSTASH_VERSION:-latest}
     # build:
     #   context: ./backend
     #   args:
-    #     PRINTSTASH_VARIANT: full   # or: lite; optional local build: gpu
+    #     PRINTSTASH_VARIANT: full   # or: lite
     container_name: printstash-api
     restart: unless-stopped
     logging: *default-logging
     # No host port: the frontend proxies /api/v1 to it inside the Docker network.
     expose:
       - "8000"
+    # --- GPU (optional) ---
+    # Uncomment the block for your host; the image is the same. Add the same lines
+    # to the worker that owns compute in a split deployment.
+    # Intel / AMD on Linux:
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "${RENDER_GID:-105}"   # getent group render | cut -d: -f3
+    # NVIDIA (NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, graphics, compute, utility]
+    # WSL2:
+    # devices:
+    #   - /dev/dxg:/dev/dxg
+    # volumes:
+    #   - /usr/lib/wsl:/usr/lib/wsl:ro
     # Anchored: the optional workers read exactly the same settings.
     environment: &api-environment
       # --- Storage ---
@@ -179,11 +200,17 @@ services:
       # uploads committed at once. Settings → Background work overrides every
       # lane's concurrency at runtime for all processes.
       VAULT_MAX_RENDER_JOBS: ${VAULT_MAX_RENDER_JOBS:-1}
-      # Qualified portable compute (optional gpu image): docs/compute.md
+      # Portable compute. The image already carries the GPU runtime; it is used
+      # only once a device is handed to this service (see "GPU" below) and
+      # stays on the CPU otherwise: docs/compute.md
       VAULT_COMPUTE_MODE: ${VAULT_COMPUTE_MODE:-auto}
       VAULT_COMPUTE_BACKEND: ${VAULT_COMPUTE_BACKEND:-auto}
       VAULT_COMPUTE_RENDER_POLICY: ${VAULT_COMPUTE_RENDER_POLICY:-qualified}
+      # GPU memory budget in MiB (256-65536) and system memory budgets as shares
+      # of host RAM for native mesh work and for resident AI models.
       VAULT_COMPUTE_MEMORY_MB: ${VAULT_COMPUTE_MEMORY_MB:-1024}
+      VAULT_MESH_MEMORY_BUDGET_FRACTION: ${VAULT_MESH_MEMORY_BUDGET_FRACTION:-0.5}
+      VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION: ${VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION:-0.25}
       VAULT_COMPUTE_BATCH_WAIT_MS: ${VAULT_COMPUTE_BATCH_WAIT_MS:-10}
       # VAULT_COMPUTE_ADAPTER: exact physical adapter name or identity
       # Derivative defaults; persisted Background work controls win on every process.
