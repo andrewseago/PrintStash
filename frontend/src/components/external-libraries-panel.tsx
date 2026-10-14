@@ -1,5 +1,6 @@
 import { EditLibrarySourceModal } from "@/components/edit-library-source-modal";
 import { describeSourceLocation } from "@/lib/library-source-location";
+import { Link } from "@/lib/link";
 import { currentLocale } from "@/lib/locale";
 import { uiText } from "@/lib/locale";
 import { useUiLocale } from "@/lib/i18n";
@@ -956,6 +957,32 @@ function AdminLibrarySourcesPanel({
                                       value1: String(s.errors.length),
                                     })
                                   : ""}
+                              </p>
+                            )}
+                          {(lib.last_scan_status === "ok" || lib.last_scan_status === "partial") &&
+                            s?.no_files_found === true && (
+                              <p
+                                role="status"
+                                className="mt-2 flex items-start gap-1.5 rounded border border-warning/30 bg-warning/10 p-2 text-2xs text-foreground"
+                              >
+                                <AlertTriangle
+                                  className="mt-0.5 h-3 w-3 shrink-0 text-warning"
+                                  aria-hidden
+                                />
+                                <span>
+                                  {uiText(
+                                    "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.",
+                                    { value1: describeSourceLocation(lib, connections) },
+                                  )}{" "}
+                                  {(lib.source_kind ?? "mounted") !== "mounted" && (
+                                    <Link
+                                      href="/settings?section=remote-storage"
+                                      className="font-medium underline"
+                                    >
+                                      {uiText("Edit connection")}
+                                    </Link>
+                                  )}
+                                </span>
                               </p>
                             )}
                           {lib.last_scan_status === "partial" && (

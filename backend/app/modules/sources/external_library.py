@@ -873,6 +873,10 @@ def scan_remote_library(
                 checkpoint.metadata_ops += page.metadata_ops
                 checkpoint.bytes_read += bytes_in_slice
                 checkpoint.updated_at = utcnow()
+                # A finished scan that observed no model file at all: the root is
+                # empty, missing (S3 keys are case-sensitive) or holds no
+                # supported format. The summary says so rather than a quiet "+0".
+                no_files_found = False
                 if page.complete:
                     session.flush()
                     total = session.exec(
@@ -912,6 +916,7 @@ def scan_remote_library(
                             ExternalLibraryObservation.checkpoint_id == checkpoint.id,
                         )
                     ).one()
+                    no_files_found = observed_count == 0 and summary.skipped == 0
                     if (not observed_count and total) or len(missing) > removal_limit:
                         summary.error = "remote_mass_removal_blocked"
                         summary.aborted = True
@@ -936,6 +941,7 @@ def scan_remote_library(
                     "cursor": checkpoint.cursor,
                     "metadata_ops": checkpoint.metadata_ops,
                     "bytes_read": checkpoint.bytes_read,
+                    "no_files_found": no_files_found,
                 }
                 library.last_scan_summary = json.dumps(result)
                 if not checkpoint.complete:

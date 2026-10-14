@@ -8,6 +8,10 @@
   to filter. An unfiltered folder still lists only its own Models. Print
   history and Uploaded now look and behave like the other filter groups.
 
+- A remote scan that finds no model file now says so on the source card, naming
+  where it looked (S3 paths are case-sensitive) and linking to the connection,
+  instead of ending quietly at "+0 added".
+
 - Library sources can be edited. Each source card has an Edit button to rename
   it, change how it maps to collections and, for a mounted folder, point it at
   another folder. A remote source now shows its connection and the bucket or

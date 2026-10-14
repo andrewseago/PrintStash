@@ -435,6 +435,60 @@ class TestRemoteScanSafety:
         assert result["complete"] is True
         assert jobs.get("completed-job").state is JobState.COMPLETED
 
+    def test_a_scan_that_finds_no_model_file_says_so(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-nothing-found")
+        source = _Source(SourcePage((), None, True, metadata_ops=1))
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["no_files_found"] is True
+        assert result["added"] == 0
+
+    def test_a_listing_with_only_unsupported_files_also_finds_no_model(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-only-text")
+        source = _Source(
+            SourcePage(
+                (SourceEntry("models/readme.txt", 10),), None, True, metadata_ops=1
+            )
+        )
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["no_files_found"] is True
+
+    def test_a_scan_that_indexes_a_model_does_not_claim_the_source_is_empty(
+        self,
+        db_session: Session,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        library = _remote_library(db_session, "remote-found")
+        path = FIXTURES_DIR / "sample.gcode"
+        source = _Source(
+            SourcePage(
+                (SourceEntry("models/sample.gcode", path.stat().st_size),),
+                None,
+                True,
+                metadata_ops=1,
+            ),
+            path,
+        )
+        monkeypatch.setattr(external_library, "source_for_library", lambda _lib: source)
+
+        result = external_library.scan_remote_library(library.id)
+
+        assert result["added"] == 1
+        assert result["no_files_found"] is False
+
     def test_incomplete_epoch_never_marks_unseen_catalog_rows_absent(
         self,
         db_session: Session,

@@ -4350,5 +4350,7 @@
   "Edit source": "Editar origen",
   "Remote location": "Ubicación remota",
   "A new folder has to be verified again before it is scanned.": "Una carpeta nueva debe verificarse de nuevo antes de escanearse.",
-  "To change the remote folder, edit its connection in Settings → Remote storage.": "Para cambiar la carpeta remota, edita su conexión en Ajustes → Remote storage."
+  "To change the remote folder, edit its connection in Settings → Remote storage.": "Para cambiar la carpeta remota, edita su conexión en Ajustes → Remote storage.",
+  "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.": "No se encontraron archivos de modelos en {value1}. Revisa el nombre de la carpeta: las rutas remotas distinguen mayúsculas.",
+  "Edit connection": "Editar conexión"
 }

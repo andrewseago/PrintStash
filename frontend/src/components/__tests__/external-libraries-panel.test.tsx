@@ -417,6 +417,65 @@ describe("ExternalLibrariesPanel", () => {
       expect(screen.queryByText("source://7/")).toBeNull();
     });
 
+    it("warns when a finished scan found no model file, naming where it looked", async () => {
+      renderPanel({
+        list: vi
+          .fn<() => Promise<ExternalLibrary[]>>()
+          .mockResolvedValue([
+            aRemoteSource({
+              last_scan_summary: aSummary({ added: 0, updated: 0, no_files_found: true }),
+            }),
+          ]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+
+      const warning = await screen.findByRole("status");
+      expect(warning).toHaveTextContent(
+        "No model files found at R2Test · test/PrintStash/. Check the folder name: remote paths are case-sensitive.",
+      );
+      expect(within(warning).getByRole("link", { name: "Edit connection" })).toHaveAttribute(
+        "href",
+        "/settings?section=remote-storage",
+      );
+    });
+
+    it("stays quiet when a scan found models", async () => {
+      renderPanel({
+        list: vi
+          .fn<() => Promise<ExternalLibrary[]>>()
+          .mockResolvedValue([
+            aRemoteSource({ last_scan_summary: aSummary({ added: 4, no_files_found: false }) }),
+          ]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      expect(screen.queryByText(/No model files found/)).toBeNull();
+    });
+
+    it("links a remote source's dialog to its connection", async () => {
+      const user = userEvent.setup();
+      renderPanel({
+        list: vi.fn<() => Promise<ExternalLibrary[]>>().mockResolvedValue([aRemoteSource()]),
+        listConnections: vi
+          .fn<ExternalLibrariesApi["listConnections"]>()
+          .mockResolvedValue(connections),
+      });
+      await screen.findByText("demo");
+
+      await user.click(screen.getByRole("button", { name: "Edit source" }));
+      const dialog = await screen.findByRole("dialog");
+
+      expect(within(dialog).getByRole("link", { name: "Edit connection" })).toHaveAttribute(
+        "href",
+        "/settings?section=remote-storage",
+      );
+    });
+
     it("renames a mounted source, sending only what changed", async () => {
       const user = userEvent.setup();
       const { api } = renderPanel();

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useUiLocale } from "@/lib/i18n";
+import { Link } from "@/lib/link";
 import { uiText } from "@/lib/locale";
 import type {
   ExternalLibrary,
@@ -83,7 +84,10 @@ export function EditLibrarySourceModal({
             <span className="text-2xs">
               {uiText(
                 "To change the remote folder, edit its connection in Settings → Remote storage.",
-              )}
+              )}{" "}
+              <Link href="/settings?section=remote-storage" className="font-medium underline">
+                {uiText("Edit connection")}
+              </Link>
             </span>
           </div>
         )}

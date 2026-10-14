@@ -4350,5 +4350,7 @@
   "Edit source": "Edit source",
   "Remote location": "Remote location",
   "A new folder has to be verified again before it is scanned.": "A new folder has to be verified again before it is scanned.",
-  "To change the remote folder, edit its connection in Settings → Remote storage.": "To change the remote folder, edit its connection in Settings → Remote storage."
+  "To change the remote folder, edit its connection in Settings → Remote storage.": "To change the remote folder, edit its connection in Settings → Remote storage.",
+  "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.": "No model files found at {value1}. Check the folder name: remote paths are case-sensitive.",
+  "Edit connection": "Edit connection"
 }
