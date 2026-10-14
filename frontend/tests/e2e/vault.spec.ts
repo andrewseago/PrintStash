@@ -105,7 +105,7 @@ test.describe("vault route", () => {
     expect(writes).toBe(1);
   });
 
-  test("refreshes a changed library deliberately", async ({ page }) => {
+  test("applies a change to a single-page library by itself", async ({ page }) => {
     const browseRequests: string[] = [];
     let changed = false;
     await page.route("**/api/v1/models/browse/revision", (route) =>
@@ -145,19 +145,53 @@ test.describe("vault route", () => {
       document.dispatchEvent(new Event("visibilitychange", { bubbles: true })),
     );
     await authorityRead;
-    await expect(
-      page.getByText("The library has changed. Refresh before loading more results."),
-    ).toBeVisible();
-    await expect(page.getByText("Original bracket", { exact: true })).toBeVisible();
-    expect(browseRequests).toHaveLength(initialReads);
-    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
-
-    await page.getByRole("button", { name: "Refresh library" }).click();
 
     await expect(page.getByText("Current bracket", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("The library has changed. Refresh before loading more results."),
+    ).toHaveCount(0);
     await expect(page.getByText("Original bracket", { exact: true })).toHaveCount(0);
     expect(browseRequests).toHaveLength(initialReads + 1);
     expect(browseRequests.every((url) => !new URL(url).searchParams.has("cursor"))).toBe(true);
+  });
+
+  test("a Model added to the open view eases in while the others stay put", async ({ page }) => {
+    let changed = false;
+    const existing = aModelListItem({ id: 1, name: "Existing bracket", thumbnail_url: null });
+    const added = aModelListItem({ id: 2, name: "Added bracket", thumbnail_url: null });
+    await page.route("**/api/v1/models/browse/revision", (route) =>
+      route.fulfill({
+        json: { browse_revision: changed ? "r2" : "r1", authorization_revision: "a1" },
+      }),
+    );
+    await page.route("**/api/v1/models/browse?**", (route) =>
+      route.fulfill({
+        json: {
+          items: (changed ? [added, existing] : [existing]).map((model) => ({
+            kind: "model",
+            model,
+          })),
+          total: changed ? 2 : 1,
+          next_cursor: null,
+          browse_revision: changed ? "r2" : "r1",
+          authorization_revision: "a1",
+        },
+      }),
+    );
+    await page.goto("/");
+    await expect(page.getByText("Existing bracket", { exact: true })).toBeVisible();
+    changed = true;
+    await page.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true })),
+    );
+
+    const arrival = page.locator("article", { hasText: "Added bracket" });
+    await expect(arrival).toBeVisible();
+    expect(await arrival.evaluate((node) => getComputedStyle(node).animationName)).toBe(
+      "card-arrive",
+    );
+    const settled = page.locator("article", { hasText: "Existing bracket" });
+    expect(await settled.evaluate((node) => getComputedStyle(node).animationName)).toBe("none");
   });
 
   test("reports a conflicting batch undo", async ({ page }) => {

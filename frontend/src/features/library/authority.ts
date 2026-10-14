@@ -127,7 +127,7 @@ export function useLibraryAuthority(
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
-    refetchInterval: 30_000,
+    refetchInterval: 10_000,
     refetchIntervalInBackground: false,
   });
   const { refetch } = query;

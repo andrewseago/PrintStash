@@ -1,5 +1,6 @@
 "use client";
 
+import { arrivingKeys, entryKeys } from "@/features/library/arrivals";
 import {
   FOLDER_CARDS_CLASS,
   FOLDER_MOVE_CLASS,
@@ -1096,6 +1097,61 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   const loadingMore = modelQuery.isFetchingNextPage || !browseReady;
   const hasMore = snapshot?.hasMore ?? false;
 
+  const [selectMode, setSelectMode] = useState(false);
+
+  // What turned up since this view was last read eases in once; everything
+  // already on screen keeps its place. A different folder starts a new reading.
+  const shownKeys = entryKeys(visibleCollections, libraryItems);
+  const [arrival, setArrival] = useState<{
+    path: string | null;
+    keys: ReadonlySet<string>;
+    arriving: ReadonlySet<string>;
+  }>({ path: displayedPath, keys: new Set(shownKeys), arriving: new Set() });
+  if (displayedPath !== null) {
+    if (arrival.path !== displayedPath) {
+      setArrival({ path: displayedPath, keys: new Set(shownKeys), arriving: new Set() });
+    } else if (
+      shownKeys.length !== arrival.keys.size ||
+      shownKeys.some((key) => !arrival.keys.has(key))
+    ) {
+      setArrival({
+        path: displayedPath,
+        keys: new Set(shownKeys),
+        arriving: arrivingKeys(arrival.keys, shownKeys),
+      });
+    }
+  }
+
+  // A change to the library applies by itself while the view is a single page:
+  // new Models ease in where they belong and a change elsewhere only moves the
+  // counts. Deeper in the list the notice stays, since reloading every page
+  // read so far on each change would move the place being read.
+  const settlesByItself =
+    authority.refreshRequired &&
+    !modelQuery.refreshRequired &&
+    currentRefresh === null &&
+    !selectMode &&
+    (snapshot?.modelPages ?? 0) <= 1;
+  const lastSettled = useRef(0);
+  // The timer must survive re-renders, so it reads the latest refresh through a
+  // ref instead of depending on an object that is new on every render.
+  const settleNow = useRef<() => void>(() => undefined);
+  useLayoutEffect(() => {
+    settleNow.current = () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.outliner });
+      void authority.refresh();
+    };
+  });
+  useEffect(() => {
+    if (!settlesByItself) return;
+    const wait = Math.max(800, lastSettled.current + 4000 - Date.now());
+    const timer = setTimeout(() => {
+      lastSettled.current = Date.now();
+      settleNow.current();
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [settlesByItself]);
+
   useEffect(() => {
     if (browseReady) settleStartup("cards", "ready");
     else if (error !== null) settleStartup("cards", "failed");
@@ -1234,7 +1290,6 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
   // survives load-more and search; backend per-model RBAC makes cross-collection
   // selections safe. We clear it when navigating folders (see below) so a hidden
   // off-screen selection doesn't linger.
-  const [selectMode, setSelectMode] = useState(false);
   const showLibraryTools = libraryToolsOpen;
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -2793,7 +2848,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   {uiText("library.readingPositionReset")}
                 </p>
               )}
-              {refreshRequired && (
+              {refreshRequired && !settlesByItself && (
                 <div
                   role="status"
                   className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-md border border-border bg-muted p-3 text-sm"
@@ -2922,6 +2977,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                       <CollectionFolderCard
                         key={collection.id}
                         collection={collection}
+                        arriving={arrival.arriving.has(`c:${collection.id}`)}
                         onSelect={handleCollectionChange}
                         onIntent={prefetchFolder}
                         onDropModel={canUploadToVault ? handleMoveModel : undefined}
@@ -2935,6 +2991,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                         <MultipartModelCard
                           key={`multipart-${item.value.id}`}
                           item={item.value}
+                          arriving={arrival.arriving.has(`p:${item.value.id}`)}
                           collectionLabel={item.value.collection_label}
                           returnTo={currentLibraryHref}
                           origin={snapshot?.entry}
@@ -2946,6 +3003,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                           key={item.value.id}
                           model={item.value}
                           origin={snapshot?.entry}
+                          arriving={arrival.arriving.has(`m:${item.value.id}`)}
                           collectionLabel={item.value.collection_label}
                           selectable={selectMode}
                           selected={selectedIds.has(item.value.id)}
@@ -3127,6 +3185,7 @@ function useModelDropTarget(path: string, onDropModel?: (source: ModelDrag, path
 
 function CollectionFolderCard({
   collection,
+  arriving = false,
   onSelect,
   onIntent,
   onDropModel,
@@ -3135,6 +3194,7 @@ function CollectionFolderCard({
   onToggleSelect,
 }: {
   collection: CollectionRead;
+  arriving?: boolean;
   onSelect: (path: string) => void;
   /** The user is about to open this folder (hover or focus): warm its data. */
   onIntent?: (path: string | null) => void;
@@ -3165,7 +3225,7 @@ function CollectionFolderCard({
           }
         }}
         {...handlers}
-        className={`group flex flex-col text-left bg-muted border rounded-lg hover:shadow-sm transition-[border-color,box-shadow,transform] duration-fast active:scale-[0.99] relative overflow-hidden ${
+        className={`${arriving ? "animate-card-arrive" : ""} group flex flex-col text-left bg-muted border rounded-lg hover:shadow-sm transition-[border-color,box-shadow,transform] duration-fast active:scale-[0.99] relative overflow-hidden ${
           selected
             ? "border-primary bg-accent"
             : dragOver

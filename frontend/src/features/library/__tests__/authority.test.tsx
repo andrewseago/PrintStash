@@ -289,7 +289,7 @@ describe("useLibraryAuthority", () => {
     const app = renderApp(<Probe />, { routes: { [revisionPath]: json(same) } });
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(screen.getByText("Settled")).toBeVisible();
-    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
     expect(app.requests()).toHaveLength(2);
     act(() => focusManager.setFocused(false));
     await act(async () => vi.advanceTimersByTimeAsync(60_000));

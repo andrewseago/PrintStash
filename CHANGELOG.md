@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The library no longer asks you to refresh when it changes. In a view that is a
+  single page, a new Model or folder eases in where it belongs and a change in
+  another folder only updates the counts; the notice remains only deeper in a
+  long list, where reloading every page read so far would move your place.
+  Changes are noticed within about ten seconds.
+
 - A 3D preview that cannot be made now says why. A model over the preview size
   limit, a file that is not a valid 3D model, a STEP file that will not convert
   and a source that cannot be read each have their own message, instead of
