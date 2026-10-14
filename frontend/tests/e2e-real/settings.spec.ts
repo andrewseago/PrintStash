@@ -99,6 +99,19 @@ const storageInsightsExample: StorageInventoryReport = {
         method: "filesystem_statvfs",
       },
     ],
+    locations: [
+      {
+        kind: "vault",
+        label: "Vault",
+        transport: "local",
+        remote: false,
+        library_id: null,
+        connection: null,
+        count: 0,
+        logical_bytes: 708.7 * mebibyte,
+        unknown_size_count: 283,
+      },
+    ],
   },
   history: [
     {

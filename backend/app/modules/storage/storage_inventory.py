@@ -26,10 +26,13 @@ from app.db.models import (
     CapacityAdmissionEvent,
     CapacityReservation,
     Collection,
+    ExternalLibrary,
     File,
+    LibrarySourceKind,
     Model,
     OwnedStorageObject,
     StagingLease,
+    StorageConnection,
     StorageDeleteIntent,
     StorageInventorySample,
     StorageObjectState,
@@ -54,6 +57,20 @@ class InventoryBucket(BaseModel):
     count: int
     logical_bytes: int
     external_bytes: int = 0
+
+
+class InventoryLocation(BaseModel):
+    """Where bytes live: the vault itself, or one library source read in place."""
+
+    kind: str  # "vault" | "library"
+    label: str
+    transport: str  # "local", "s3", ... for the vault; the source kind for a library
+    remote: bool
+    library_id: int | None = None
+    connection: str | None = None
+    count: int = 0
+    logical_bytes: int = 0
+    unknown_size_count: int = 0
 
 
 class VolumeEvidence(BaseModel):
@@ -113,6 +130,7 @@ class StorageInventory(BaseModel):
     )
     latest_audit: AuditObservation | None = None
     volumes: list[VolumeEvidence] = Field(default_factory=list)
+    locations: list[InventoryLocation] = Field(default_factory=list)
 
 
 _PROVIDER_CAPACITY_STALE_AFTER = timedelta(hours=2)
@@ -133,7 +151,7 @@ def _stored_provider_capacity(
         return ProviderCapacityEvidence()
     try:
         payload = StorageInventory.model_validate_json(latest.evidence_json)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return ProviderCapacityEvidence(
             status="degraded", error="invalid_stored_evidence"
         )
@@ -223,7 +241,7 @@ def capacity_activity(session: Session) -> CapacityActivity:
                 CapacityResource(**item) for item in json.loads(row.resources_json)
             ]
             identity = json.loads(row.owner_identity_json or "{}")
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             resources = []
             identity = {}
         active.append(
@@ -382,6 +400,63 @@ def _volumes(reserved: dict[str, int]) -> list[VolumeEvidence]:
     return list(groups.values())
 
 
+def _locations(
+    session: Session, backend, *, owned_bytes: int, unknown_objects: int
+) -> list[InventoryLocation]:
+    """Bytes by place: this server's vault, then each library source."""
+    placed = {
+        library_id: (count, size)
+        for library_id, count, size in session.execute(
+            sa_select(
+                col(File.external_library_id),
+                func.count(col(File.id)),
+                func.coalesce(func.sum(col(File.size_bytes)), 0),
+            )
+            .join(Model, col(Model.id) == col(File.model_id))
+            .where(
+                col(File.is_external).is_(True),
+                col(File.external_library_id).is_not(None),
+                col(File.sha256) != SENTINEL_FILE_HASH,
+                live(File),
+                live(Model),
+            )
+            .group_by(col(File.external_library_id))
+        ).all()
+    }
+    connections = {
+        row.id: row.name for row in session.exec(select(StorageConnection)).all()
+    }
+    transport = str(getattr(backend, "transport", "local"))
+    locations = [
+        InventoryLocation(
+            kind="vault",
+            label="Vault",
+            transport=transport,
+            remote=transport != "local",
+            count=0,
+            logical_bytes=owned_bytes,
+            unknown_size_count=unknown_objects,
+        )
+    ]
+    for library in session.exec(
+        select(ExternalLibrary).order_by(col(ExternalLibrary.id))
+    ):
+        count, size = placed.get(library.id, (0, 0))
+        locations.append(
+            InventoryLocation(
+                kind="library",
+                label=library.name,
+                transport=library.source_kind.value,
+                remote=library.source_kind != LibrarySourceKind.MOUNTED,
+                library_id=library.id,
+                connection=connections.get(library.connection_id),
+                count=int(count),
+                logical_bytes=int(size),
+            )
+        )
+    return locations
+
+
 def inventory(
     session: Session,
     *,
@@ -517,6 +592,8 @@ def inventory(
         provider_capacity = _measure_provider_capacity(
             backend, target_ref, provider_capacity
         )
+    unique_owned = sum(size for size in objects.values() if size is not None)
+    unknown_objects = sum(size is None for size in objects.values())
     return StorageInventory(
         generated_at=utcnow(),
         target_ref=target_ref,
@@ -527,8 +604,8 @@ def inventory(
             if bucket.lifecycle not in {"temporary", "replica"}
         ),
         external_referenced_bytes=sum(bucket.external_bytes for bucket in buckets),
-        unique_owned_bytes=sum(size for size in objects.values() if size is not None),
-        unknown_object_count=sum(size is None for size in objects.values()),
+        unique_owned_bytes=unique_owned,
+        unknown_object_count=unknown_objects,
         temporary_bytes=temporary,
         backup_bytes=backup_bytes,
         measured_provider_bytes=provider_capacity.used_bytes,
@@ -536,6 +613,9 @@ def inventory(
         provider_capacity=provider_capacity,
         latest_audit=_latest_audit_observation(session),
         volumes=_volumes(reserved or {}),
+        locations=_locations(
+            session, backend, owned_bytes=unique_owned, unknown_objects=unknown_objects
+        ),
     )
 
 
@@ -691,7 +771,7 @@ def history(session: Session, target_ref: str) -> list[dict]:
         try:
             evidence = StorageInventory.model_validate_json(row.evidence_json)
             categories = _history_categories(evidence)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
         result.append(
             {

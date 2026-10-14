@@ -52,6 +52,7 @@ const report: StorageInventoryReport = {
         method: "unavailable",
       },
     ],
+    locations: [],
   },
   history: [],
   forecast: {
@@ -133,6 +134,67 @@ describe("Storage insights", () => {
     });
     expect(await screen.findByText("New allocations blocked")).toBeVisible();
   });
+  it("separates what this computer holds from what a remote source reads in place", async () => {
+    setup({
+      ...report,
+      inventory: {
+        ...report.inventory,
+        locations: [
+          {
+            kind: "vault",
+            label: "Vault",
+            transport: "local",
+            remote: false,
+            library_id: null,
+            connection: null,
+            count: 0,
+            logical_bytes: 439 * 1024 ** 2,
+            unknown_size_count: 0,
+          },
+          {
+            kind: "library",
+            label: "NAS models",
+            transport: "mounted",
+            remote: false,
+            library_id: 2,
+            connection: null,
+            count: 12,
+            logical_bytes: 100 * 1024 ** 2,
+            unknown_size_count: 0,
+          },
+          {
+            kind: "library",
+            label: "demo",
+            transport: "s3",
+            remote: true,
+            library_id: 1,
+            connection: "R2Test",
+            count: 91,
+            logical_bytes: 5 * 1024 ** 3,
+            unknown_size_count: 0,
+          },
+        ],
+      },
+    });
+
+    const places = await screen.findByRole("region", { name: "Where your files live" });
+    expect(
+      within(places).getByText("539 MB on this computer · 5 GB in remote storage"),
+    ).toBeVisible();
+    expect(within(places).getByText("This computer")).toBeVisible();
+    expect(within(places).getByText("Mounted folder")).toBeVisible();
+    expect(within(places).getByText("S3 · R2Test")).toBeVisible();
+    expect(within(places).getByText("91 files read in place")).toBeVisible();
+  });
+
+  it("offers no breakdown when the server reports no places", async () => {
+    setup(report);
+
+    await screen.findByText("What uses space");
+
+    expect(screen.queryByRole("region", { name: "Where your files live" })).toBeNull();
+  });
+
   it("shows measured free space prominently", async () => {
     setup({
       ...report,

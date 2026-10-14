@@ -5,6 +5,7 @@ import {
   Box,
   ChevronRight,
   Clock3,
+  Cloud,
   Database,
   Folder,
   HardDrive,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/api/storage-inventory";
 import { useI18n } from "@/lib/i18n";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { bytesByWhere, placeKind } from "@/lib/storage-locations";
 import { formatBytes } from "@printstash/domain/format";
 import { knownUiText } from "@/lib/locale";
 
@@ -413,6 +415,83 @@ export function StorageInventoryPanel() {
                 })}
               </p>
             </div>
+          )}
+          {current.locations.length > 0 && (
+            <section
+              aria-labelledby="storage-by-place-title"
+              className="border-b px-4 py-4 sm:px-5"
+            >
+              <div className="flex items-center gap-2">
+                <HardDrive className="h-4 w-4 text-muted-foreground" aria-hidden />
+                <h3 id="storage-by-place-title" className="text-sm font-semibold">
+                  {t("Where your files live")}
+                </h3>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("{here} on this computer · {remote} in remote storage", {
+                  here: bytes(bytesByWhere(current.locations).here, locale),
+                  remote: bytes(bytesByWhere(current.locations).remote, locale),
+                })}
+              </p>
+              <ul className="mt-4 space-y-3">
+                {current.locations.map((place) => {
+                  const kind = placeKind(place);
+                  const Icon = place.remote ? Cloud : HardDrive;
+                  const largest = Math.max(1, ...current.locations.map((row) => row.logical_bytes));
+                  return (
+                    <li key={place.library_id ?? "vault"}>
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Icon
+                            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                            aria-hidden
+                          />
+                          <span className="truncate font-medium">
+                            {place.kind === "vault" ? t("Vault") : place.label}
+                          </span>
+                          <span className="truncate text-muted-foreground">
+                            {kind === "vault-local" && t("This computer")}
+                            {kind === "vault-remote" &&
+                              t("Remote storage · {transport}", { transport: place.transport })}
+                            {kind === "mounted" && t("Mounted folder")}
+                            {kind === "remote-source" &&
+                              t("{transport} · {connection}", {
+                                transport: place.transport.toUpperCase(),
+                                connection: place.connection ?? t("Remote storage"),
+                              })}
+                          </span>
+                        </span>
+                        <strong className="shrink-0 font-semibold tabular-nums">
+                          {bytes(place.logical_bytes, locale)}
+                        </strong>
+                      </div>
+                      <span
+                        className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-muted"
+                        aria-hidden
+                      >
+                        <span
+                          className={`block h-full origin-left ${place.remote ? "bg-primary/70" : "bg-foreground/75"}`}
+                          style={{
+                            transform:
+                              "scaleX(" + Math.max(0.015, place.logical_bytes / largest) + ")",
+                          }}
+                        />
+                      </span>
+                      {place.kind === "library" && (
+                        <p className="mt-1 text-2xs text-muted-foreground">
+                          {t("{count} files read in place", { count: place.count })}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {t(
+                  "Library sources stay where they are. Their previews and catalog are kept in the vault.",
+                )}
+              </p>
+            </section>
           )}
           <div className="grid border-b lg:grid-cols-2">
             <section

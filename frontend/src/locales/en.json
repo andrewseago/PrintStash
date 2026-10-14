@@ -4388,5 +4388,13 @@
   "discovering": "discovering",
   "Preparing previews": "Preparing previews",
   "{count} left · continues in background": "{count} left · continues in background",
-  "Previews are ready": "Previews are ready"
+  "Previews are ready": "Previews are ready",
+  "Where your files live": "Where your files live",
+  "{here} on this computer · {remote} in remote storage": "{here} on this computer · {remote} in remote storage",
+  "This computer": "This computer",
+  "Remote storage · {transport}": "Remote storage · {transport}",
+  "Mounted folder": "Mounted folder",
+  "{transport} · {connection}": "{transport} · {connection}",
+  "{count} files read in place": "{count} files read in place",
+  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Library sources stay where they are. Their previews and catalog are kept in the vault."
 }

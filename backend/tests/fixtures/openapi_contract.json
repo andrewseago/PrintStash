@@ -7434,6 +7434,72 @@
         "title": "InventoryBucket",
         "type": "object"
       },
+      "InventoryLocation": {
+        "description": "Where bytes live: the vault itself, or one library source read in place.",
+        "properties": {
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "library_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Id"
+          },
+          "logical_bytes": {
+            "default": 0,
+            "title": "Logical Bytes",
+            "type": "integer"
+          },
+          "remote": {
+            "title": "Remote",
+            "type": "boolean"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          },
+          "unknown_size_count": {
+            "default": 0,
+            "title": "Unknown Size Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "transport",
+          "remote"
+        ],
+        "title": "InventoryLocation",
+        "type": "object"
+      },
       "InventoryReport": {
         "properties": {
           "forecast": {
@@ -19872,6 +19938,13 @@
                 "type": "null"
               }
             ]
+          },
+          "locations": {
+            "items": {
+              "$ref": "#/components/schemas/InventoryLocation"
+            },
+            "title": "Locations",
+            "type": "array"
           },
           "logical_bytes": {
             "title": "Logical Bytes",

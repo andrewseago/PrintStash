@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Storage insights now show where your files live: the vault on this computer,
+  and each library source with its type and connection, with the total held on
+  this computer apart from what sits in remote storage such as R2. Library
+  sources stay where they are, so only their previews and catalog count against
+  the vault.
+
 - Thumbnail and 3D-view generation now shows in Tasks. After an import or a scan,
   administrators see one "Preparing previews" task counting what is left, which
   completes when the queue empties instead of the work being invisible.

@@ -4388,5 +4388,13 @@
   "discovering": "listando",
   "Preparing previews": "Preparando vistas previas",
   "{count} left · continues in background": "Quedan {count} · continúa en segundo plano",
-  "Previews are ready": "Las vistas previas están listas"
+  "Previews are ready": "Las vistas previas están listas",
+  "Where your files live": "Dónde viven tus archivos",
+  "{here} on this computer · {remote} in remote storage": "{here} en este equipo · {remote} en almacenamiento remoto",
+  "This computer": "Este equipo",
+  "Remote storage · {transport}": "Almacenamiento remoto · {transport}",
+  "Mounted folder": "Carpeta montada",
+  "{transport} · {connection}": "{transport} · {connection}",
+  "{count} files read in place": "{count} archivos leídos en su sitio",
+  "Library sources stay where they are. Their previews and catalog are kept in the vault.": "Los orígenes de biblioteca se quedan donde están. Sus vistas previas y su catálogo se guardan en la bóveda."
 }
