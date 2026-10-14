@@ -36,24 +36,34 @@ function renderReadme(
   options: RenderAppOptions & {
     readme?: string | null;
     canEdit?: boolean;
+    disabled?: boolean;
     hasReadme?: boolean;
   } = {},
 ) {
   const {
     readme = null,
     canEdit = true,
+    disabled,
     hasReadme = readme !== null,
     routes = {},
     ...rest
   } = options;
-  return renderApp(<CollectionReadme collectionId={5} canEdit={canEdit} hasReadme={hasReadme} />, {
-    routes: {
-      "GET /api/v1/collections/5/readme": json({ readme }),
-      "PUT /api/v1/collections/5/readme": json({ readme: "saved" }),
-      ...routes,
+  return renderApp(
+    <CollectionReadme
+      collectionId={5}
+      canEdit={canEdit}
+      disabled={disabled}
+      hasReadme={hasReadme}
+    />,
+    {
+      routes: {
+        "GET /api/v1/collections/5/readme": json({ readme }),
+        "PUT /api/v1/collections/5/readme": json({ readme: "saved" }),
+        ...routes,
+      },
+      ...rest,
     },
-    ...rest,
-  });
+  );
 }
 
 function readmeReads(requestsWithMethod: (method: string) => { url: string }[], id: number) {
@@ -72,6 +82,14 @@ afterEach(() => {
 });
 
 describe("CollectionReadme", () => {
+  it("keeps the add-description affordance in place, inert, while the library refreshes", async () => {
+    renderReadme({ readme: null, disabled: true });
+
+    expect(
+      await screen.findByRole("button", { name: /Add a description for this collection/ }),
+    ).toBeDisabled();
+  });
+
   describe("a folder with a description", () => {
     it("shows it", async () => {
       renderReadme({ readme: "Brackets for the shelf rig." });

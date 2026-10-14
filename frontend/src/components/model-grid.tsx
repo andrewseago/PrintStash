@@ -2480,9 +2480,7 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   entityLabel={displayedCollection.name}
                   tags={displayedCollection.tags}
                   availableTags={tags}
-                  canEdit={
-                    browseReady && (!!user?.is_superuser || canWriteCollection(displayedCollection))
-                  }
+                  canEdit={!!user?.is_superuser || canWriteCollection(displayedCollection)}
                   help={uiText(
                     "Collection tags are inherited by Models in this collection and every descendant for search and filtering.",
                   )}
@@ -2492,9 +2490,8 @@ export function ModelBrowser({ initial }: { initial?: BrowserInitialData }) {
                   key={displayedCollection.id}
                   collectionId={displayedCollection.id}
                   hasReadme={displayedCollection.has_readme}
-                  canEdit={
-                    browseReady && (!!user?.is_superuser || canWriteCollection(displayedCollection))
-                  }
+                  canEdit={!!user?.is_superuser || canWriteCollection(displayedCollection)}
+                  disabled={!browseReady}
                 />
               </div>
             )

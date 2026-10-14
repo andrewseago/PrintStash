@@ -20,10 +20,13 @@ import { toast } from "@/lib/toast";
 export function CollectionReadme({
   collectionId,
   canEdit,
+  disabled = false,
   hasReadme,
 }: {
   collectionId: number;
   canEdit: boolean;
+  /** Keeps the edit affordance in place, but inert, while the library refreshes. */
+  disabled?: boolean;
   /** From `CollectionRead.has_readme`; false skips the request entirely. */
   hasReadme: boolean;
 }) {
@@ -205,6 +208,7 @@ export function CollectionReadme({
           {canEdit && (
             <button
               onClick={startEdit}
+              disabled={disabled}
               className="absolute top-0 right-0 flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-foreground bg-background border border-border rounded hover:bg-muted opacity-0 group-hover/readme:opacity-100 transition-opacity"
             >
               <Pencil className="w-3.5 h-3.5" />
@@ -215,6 +219,7 @@ export function CollectionReadme({
       ) : (
         <button
           onClick={startEdit}
+          disabled={disabled}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
         >
           <FileText className="w-4 h-4" />
