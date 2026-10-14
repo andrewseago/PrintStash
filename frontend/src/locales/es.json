@@ -4346,5 +4346,5 @@
   "gpu.reason.deadline": "Tiempo agotado",
   "gpu.reason.invalid_input": "Entrada no válida",
   "gpu.reason.cancelled": "Cancelado",
-  "gpu.reason.broker_unavailable": "El servicio de cómputo no está en ejecución"
+  "gpu.reason.broker_unavailable": "El servicio de cómputo no está en ejecución o aún está arrancando"
 }

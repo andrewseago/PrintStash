@@ -49,6 +49,22 @@ describe("GpuServerStatus", () => {
     expect(screen.queryByText("Device")).not.toBeInTheDocument();
   });
 
+  it("shows a reachable device that no operation uses yet, with the reason", async () => {
+    renderApp(<Card />, {
+      routes: {
+        "GET /api/v1/system/compute": json(
+          aComputeStatus({
+            capabilities: [{ operation: "render", available: false, reason: "unqualified" }],
+          }),
+        ),
+      },
+    });
+
+    expect(await screen.findByText("GPU accessible from the API")).toBeInTheDocument();
+    expect(screen.getByText("NVIDIA GeForce RTX 4070")).toBeInTheDocument();
+    expect(screen.getByText(/Not qualified yet · Work runs on the CPU/)).toBeInTheDocument();
+  });
+
   it("reports a failed read instead of claiming there is no GPU", async () => {
     renderApp(<Card />, {
       routes: { "GET /api/v1/system/compute": json({ detail: "boom" }, 500) },

@@ -4346,5 +4346,5 @@
   "gpu.reason.deadline": "Timed out",
   "gpu.reason.invalid_input": "Invalid input",
   "gpu.reason.cancelled": "Cancelled",
-  "gpu.reason.broker_unavailable": "The compute service is not running"
+  "gpu.reason.broker_unavailable": "The compute service is not running or is still starting"
 }

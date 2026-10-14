@@ -1,15 +1,16 @@
 /*
- * "Accessible from the API" means a device was found and at least one operation
- * is offered on it. A device with nothing available, or capabilities without a
- * device, must not read as a usable GPU.
+ * "Accessible from the API" means the compute runtime found a device. Whether an
+ * operation may use it yet (qualification, optional runtimes) is separate, so a
+ * found device with nothing placed on it is accessible but idle, and
+ * capabilities without a device never read as a reachable GPU.
  */
 import { describe, expect, it } from "vitest";
 
-import { gpuAccessible } from "../gpu-status";
+import { gpuAccessible, gpuIdle } from "../gpu-status";
 import { aComputeStatus } from "@/test-support/factories";
 
-describe("gpuAccessible", () => {
-  it("is true with a device offering at least one operation", () => {
+describe("GPU reachability", () => {
+  it("is true when the runtime found a device", () => {
     expect(gpuAccessible(aComputeStatus())).toBe(true);
   });
 
@@ -17,10 +18,16 @@ describe("gpuAccessible", () => {
     expect(gpuAccessible(aComputeStatus({ device: null }))).toBe(false);
   });
 
-  it("is false when a device is found but nothing is available on it", () => {
-    const none = aComputeStatus({
-      capabilities: [{ operation: "render", available: false, reason: "software_adapter" }],
+  it("stays true when a device is found but no operation is placed on it yet", () => {
+    const unqualified = aComputeStatus({
+      capabilities: [{ operation: "render", available: false, reason: "unqualified" }],
     });
-    expect(gpuAccessible(none)).toBe(false);
+    expect(gpuAccessible(unqualified)).toBe(true);
+    expect(gpuIdle(unqualified)).toBe(true);
+  });
+
+  it("is not idle once an operation can use the device, or when there is no device", () => {
+    expect(gpuIdle(aComputeStatus())).toBe(false);
+    expect(gpuIdle(aComputeStatus({ device: null }))).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes } from "@/lib/format";
 import { useI18n } from "@/lib/i18n";
-import { gpuAccessible } from "@/lib/gpu-status";
+import { gpuAccessible, gpuIdle } from "@/lib/gpu-status";
 import type { ComputeCapability, ComputeStatus } from "@/types/system";
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -41,13 +41,14 @@ export function GpuServerStatus({ read }: { read: UseQueryResult<ComputeStatus> 
   const status = read.data;
   const accessible = gpuAccessible(status);
   const blocked = status.capabilities.find((capability) => !capability.available);
+  const idle = gpuIdle(status);
   return (
     <div className="space-y-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={accessible ? "success" : "warning"}>
           {accessible ? t("gpu.server.accessible") : t("gpu.server.inaccessible")}
         </Badge>
-        {!accessible && blocked && (
+        {(!accessible || idle) && blocked && (
           <span className="text-xs text-muted-foreground">
             {t(`gpu.reason.${blocked.reason}`)} · {t("gpu.server.cpuNote")}
           </span>
