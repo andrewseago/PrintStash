@@ -3,6 +3,7 @@
 import {
   EXPANDED_KEY,
   readExpandedPaths,
+  restoredExpansions,
   useOutlinerRestoration,
 } from "@/lib/use-outliner-restoration";
 
@@ -729,11 +730,10 @@ export function FilterSidebarContent({
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     // A first visit starts at the top level: the tree loads a level only when
     // it is opened, and opening a large library whole is what #295 was.
-    const initial = readExpandedPaths() ?? new Set<string>();
-    if (selectedCollection) {
-      for (const ancestor of ancestorPaths(selectedCollection)) initial.add(ancestor);
-    }
-    return initial;
+    return restoredExpansions(
+      readExpandedPaths(),
+      selectedCollection ? ancestorPaths(selectedCollection) : [],
+    );
   });
   const [allModelsExpanded, setAllModelsExpanded] = useState(readAllModelsExpanded);
   const {

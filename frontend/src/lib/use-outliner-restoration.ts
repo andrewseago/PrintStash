@@ -18,6 +18,25 @@ export function readExpandedPaths(): Set<string> | null {
   }
 }
 
+/** Folders opened outside the active path that a reload brings back. */
+export const REMEMBERED_EXPANSIONS = 6;
+
+/**
+ * What a reload reopens: the folders on the way to the current collection,
+ * always, plus the most recently opened of the others. The saved set keeps its
+ * insertion order, so a folder opened or revealed later sorts later; without
+ * the limit a long session restored a tree as tall as the whole library.
+ */
+export function restoredExpansions(
+  saved: ReadonlySet<string> | null,
+  ancestors: readonly string[],
+  limit = REMEMBERED_EXPANSIONS,
+): Set<string> {
+  const onPath = new Set(ancestors);
+  const others = [...(saved ?? [])].filter((path) => !onPath.has(path));
+  return new Set([...others.slice(Math.max(0, others.length - limit)), ...ancestors]);
+}
+
 /** The drawer and visible tree share one restoration for each history entry. */
 export function useOutlinerRestoration(
   params: OutlinerParams,
