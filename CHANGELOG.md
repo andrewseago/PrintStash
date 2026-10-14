@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- There is a single PrintStash image, and it can use the GPU. The separate GPU
+  image variants are gone: the one image on GHCR uses an NVIDIA, Intel or AMD
+  GPU, or the WSL2 GPU, whenever the container is handed one, and runs on the
+  CPU otherwise. Docker Compose, Unraid and the other app stores can now pass a
+  GPU and set the GPU and system memory budgets
+  (`VAULT_COMPUTE_MEMORY_MB`, `VAULT_MESH_MEMORY_BUDGET_FRACTION`,
+  `VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION`); see `docs/compute.md`.
+
+- A model's 3D view opens straight away, even for a large mesh; the
+  "Load 3D preview" button is gone from the model page.
+
 - The library loads the next page as you scroll, so there is no "Load more"
   button to press. Loading starts a little before you reach the end, shows a
   spinner while it reads, and the button only comes back if a read fails or the

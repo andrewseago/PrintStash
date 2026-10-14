@@ -230,7 +230,6 @@ function PageControls({
   initial: boolean;
 }) {
   useUiLocale();
-  const [requested, setRequested] = useState(false);
   if (initial && query.isPending) return <Skeleton className="my-1 h-4 w-3/4" />;
   if (query.isError)
     return (
@@ -248,19 +247,18 @@ function PageControls({
         </Button>
       </div>
     );
-  if (!query.hasNextPage && !requested) return null;
+  if (!query.hasNextPage) return null;
   return (
     <Button
       variant="ghost"
       size="sm"
-      aria-disabled={query.isFetchingNextPage || !query.hasNextPage}
+      aria-disabled={query.isFetchingNextPage}
       onClick={() => {
-        if (query.isFetchingNextPage || !query.hasNextPage) return;
-        setRequested(true);
+        if (query.isFetchingNextPage) return;
         void query.fetchNextPage();
       }}
     >
-      {query.hasNextPage ? label : uiText("All items loaded")}
+      {label}
     </Button>
   );
 }

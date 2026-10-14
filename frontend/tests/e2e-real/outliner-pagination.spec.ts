@@ -38,7 +38,7 @@ test.describe("outliner pagination", () => {
       }
       const target = sidebar.getByRole("button", { name: seeded.target.name, exact: true });
       await expect(target).toBeVisible();
-      await expect(sidebar.getByRole("button", { name: "All items loaded" })).toBeFocused();
+      await expect(more).toBeHidden();
       await target.press("Enter");
       await expect(page).toHaveURL(new RegExp(`/models/${seeded.target.id}$`));
 

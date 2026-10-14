@@ -926,7 +926,7 @@ describe("outliner pages", () => {
     more.focus();
     await user.keyboard("{Enter}");
     await screen.findByText("Part 050");
-    expect(screen.getByRole("button", { name: "All items loaded" })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Show more models" })).not.toBeInTheDocument();
     const requests = app.requests().filter((r) => r.url.includes("/outliner/entries"));
     expect(requests).toHaveLength(2);
     expect(

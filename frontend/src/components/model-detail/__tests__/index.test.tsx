@@ -258,6 +258,14 @@ describe("ModelDetail", () => {
       expect(await screen.findByText("Benchy")).toBeInTheDocument();
     });
 
+    it("opens a large mesh's 3D view without asking first", async () => {
+      renderDetail({ model: aModel({ files: [aFile({ size_bytes: 48 * 1024 ** 2 })] }) });
+      await screen.findByText("Benchy");
+
+      expect(screen.queryByRole("button", { name: "Load 3D preview" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Large 3D preview/)).not.toBeInTheDocument();
+    });
+
     it("opens on the overview", async () => {
       renderDetail();
 
