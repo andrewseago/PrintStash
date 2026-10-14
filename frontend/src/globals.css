@@ -319,6 +319,30 @@
   }
 }
 
+/* A tree count that changed settles toward its new value: up when it grew,
+   down when it shrank. 4px, press-fast: a tick, not a slide. */
+@keyframes count-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes count-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Floating panels (suggestion lists, pickers) settle from 97% scale. */
 @keyframes pop-in {
   from {
@@ -391,6 +415,14 @@
 
   .animate-panel-in {
     animation: panel-in var(--duration-fast) var(--ease-out) both;
+  }
+
+  .animate-count-up {
+    animation: count-up var(--duration-press) var(--ease-out) both;
+  }
+
+  .animate-count-down {
+    animation: count-down var(--duration-press) var(--ease-out) both;
   }
 
   .folder-in-forward {
@@ -489,6 +521,8 @@
   .pop-in,
   .folder-in-forward,
   .folder-in-back,
+  .animate-count-up,
+  .animate-count-down,
   .animate-panel-in {
     animation: fade-in var(--duration-fast) ease both;
   }

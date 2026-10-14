@@ -8,6 +8,10 @@
   to filter. An unfiltered folder still lists only its own Models. Print
   history and Uploaded now look and behave like the other filter groups.
 
+- Applying a filter no longer rebuilds the collection tree. Its rows stay put,
+  the counts dim while they reload, and each count that changes ticks toward
+  its new value.
+
 - Picking a filter value no longer hides the other values of its group, so you
   can add a second file type (or any other value) without clearing the first.
   While a filter is on, the view lists the matching Models only, without the

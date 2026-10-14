@@ -553,6 +553,9 @@ export function useOutlinerCollections(params: OutlinerParams, enabled = true) {
     initialPageParam: null,
     getNextPageParam: (page) => page.next_cursor,
     enabled,
+    // A filter changes this key. Keep the rows that are on screen while the
+    // new counts load, instead of emptying the tree and building it again.
+    placeholderData: keepPreviousData,
   });
 }
 export function useOutlinerEntries(params: OutlinerParams, enabled = true) {
@@ -564,6 +567,7 @@ export function useOutlinerEntries(params: OutlinerParams, enabled = true) {
     initialPageParam: null,
     getNextPageParam: (page) => page.next_cursor,
     enabled,
+    placeholderData: keepPreviousData,
   });
 }
 export function useOutlinerSearch(params: OutlinerParams, enabled = true) {
@@ -633,5 +637,7 @@ export function useOutlinerRestore(params: OutlinerRestoreParams, enabled = true
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: false,
+    // A filter re-keys the restoration; the tree stays up while it settles.
+    placeholderData: keepPreviousData,
   });
 }

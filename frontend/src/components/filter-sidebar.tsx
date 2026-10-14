@@ -7,6 +7,7 @@ import {
   useOutlinerRestoration,
 } from "@/lib/use-outliner-restoration";
 
+import { TreeCount } from "@/components/tree-count";
 import { captureModelDrag, type ModelDrag } from "@/lib/model-dnd";
 import { knownUiText } from "@/lib/locale";
 import { uiText } from "@/lib/locale";
@@ -339,7 +340,7 @@ function CollectionLevel({ parentId, ctx }: { parentId: number | null; ctx: Tree
       {[...nodes.values()]
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((node) => (
-          <CollectionTreeRow key={node.id} node={node} ctx={ctx} />
+          <CollectionTreeRow key={node.id} node={node} ctx={ctx} stale={query.isPlaceholderData} />
         ))}
       <PageControls
         query={query}
@@ -423,7 +424,15 @@ function SearchResults({
   );
 }
 
-function CollectionTreeRow({ node, ctx }: { node: OutlinerCollection; ctx: TreeContext }) {
+function CollectionTreeRow({
+  node,
+  ctx,
+  stale,
+}: {
+  node: OutlinerCollection;
+  ctx: TreeContext;
+  stale: boolean;
+}) {
   "use memo";
   const { t: uiText } = useI18n();
   const [confirming, setConfirming] = useState(false);
@@ -608,9 +617,7 @@ function CollectionTreeRow({ node, ctx }: { node: OutlinerCollection; ctx: TreeC
                   </button>
                 )}
               </span>
-              <span className="block min-w-[18px] rounded bg-muted px-1 py-0.5 text-center text-2xs font-medium text-muted-foreground">
-                {node.subtree_entry_count}
-              </span>
+              <TreeCount value={node.subtree_entry_count} stale={stale} />
             </span>
           </div>
         )}

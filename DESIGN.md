@@ -269,6 +269,7 @@ Both are covered by e2e tests in `frontend/tests/e2e/app-routes.spec.ts`.
 | `pop-in` | Floating panels — from `scale(0.97)` |
 | `slide-up`, `slide-in-left` | Drawers and sheets |
 | `folder-in-forward`, `folder-in-back` | Library content after a folder change: from the right when drilling in, from the left when climbing out (24px, `slow`). X-axis only — a vertical offset would move the entries reading-position restoration measures. Unrelated jumps use `fade-in` |
+| `animate-count-up`, `animate-count-down` | A collection tree count that changed: moves 4px toward the new value (up when it grew, down when it shrank) over `press`. Not played on first mount, so a whole tree never ticks in; a count that still describes the previous filters is dimmed to 50% instead |
 | `stagger-children` | On a grid container: children settle 30ms apart, **capped at 10** so a 60-card page still lands inside the 300ms budget |
 
 Stagger is decorative sequencing. It must never delay interaction, and it is
