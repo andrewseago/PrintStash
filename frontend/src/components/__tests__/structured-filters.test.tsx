@@ -151,12 +151,44 @@ describe("StructuredFilters", () => {
     });
   });
 
+  describe("one family of groups", () => {
+    it("gives Print history and Uploaded the same disclosure control as a facet group", async () => {
+      const user = userEvent.setup();
+      renderFilters();
+
+      for (const name of [FILE_TYPE_GROUP, "Print history", "Uploaded"]) {
+        const toggle = screen.getByRole("button", { name });
+        expect(toggle).toHaveAttribute("aria-controls");
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        await user.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+      }
+    });
+
+    it("keeps the print history fields in the panel's one-column dense layout", async () => {
+      const user = userEvent.setup();
+      renderFilters();
+
+      await user.click(screen.getByRole("button", { name: "Print history" }));
+
+      expect(screen.getByLabelText(/Finished on or after/)).toHaveClass("h-8", "text-xs");
+    });
+
+    it("opens a group that already holds a value, and counts it", () => {
+      renderFilters({ uploadedAfter: "2026-01-01" });
+
+      const uploaded = screen.getByRole("button", { name: /Uploaded/ });
+      expect(uploaded).toHaveAttribute("aria-expanded", "true");
+      expect(uploaded).toHaveTextContent("1");
+    });
+  });
+
   describe("the upload date window", () => {
     it("reports the start of the window", async () => {
       const user = userEvent.setup();
       const { onDateChange } = renderFilters();
 
-      await user.click(screen.getByText("Uploaded"));
+      await user.click(screen.getByRole("button", { name: "Uploaded" }));
       await user.type(screen.getByLabelText("After"), "2026-01-01");
 
       expect(onDateChange).toHaveBeenCalledWith("uploaded_after", "2026-01-01");
@@ -166,7 +198,7 @@ describe("StructuredFilters", () => {
       const user = userEvent.setup();
       const { onDateChange } = renderFilters();
 
-      await user.click(screen.getByText("Uploaded"));
+      await user.click(screen.getByRole("button", { name: "Uploaded" }));
       await user.type(screen.getByLabelText("Before"), "2026-02-01");
 
       expect(onDateChange).toHaveBeenCalledWith("uploaded_before", "2026-02-01");
