@@ -23,9 +23,7 @@ def _browse(session: Session) -> str:
 
 
 class TestStars:
-    def test_starring_and_unstarring_a_model_keeps_the_revision(
-        self, db_session: Session
-    ) -> None:
+    def test_starring_a_model_keeps_the_revision(self, db_session: Session) -> None:
         user = identity.build_user(db_session)
         model = library.build_model(db_session)
         before = _browse(db_session)
@@ -153,7 +151,7 @@ class TestListingChanges:
 
 
 class TestDowngrade:
-    def test_uninstalling_restores_the_v1_triggers_and_reinstalling_replaces_them(
+    def test_uninstalling_restores_v1_then_reinstalling_replaces_it(
         self, db_session: Session
     ) -> None:
         user = identity.build_user(db_session)

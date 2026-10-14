@@ -1,3 +1,9 @@
+/*
+ * Where a folder's cards arrive from. Drilling in comes from the right, climbing
+ * out from the left, and anything unrelated fades. The classification must not
+ * mistake a shared name prefix ("house" / "house2") for ancestry, and the
+ * entrances stay horizontal or opacity-only so reading-position anchors hold.
+ */
 import { describe, expect, it } from "vitest";
 
 import { FOLDER_CARDS_CLASS, FOLDER_MOVE_CLASS, folderMove } from "../folder-transition";
@@ -13,7 +19,7 @@ describe("folderMove", () => {
     expect(folderMove("house", "")).toBe("back");
   });
 
-  it("is a jump between siblings, and never mistakes a shared name prefix for ancestry", () => {
+  it("is a jump between unrelated paths, never because of a shared name prefix", () => {
     expect(folderMove("house", "garage")).toBe("jump");
     expect(folderMove("house", "house2")).toBe("jump");
     expect(folderMove("house/garden", "garage/tools")).toBe("jump");

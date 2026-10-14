@@ -152,7 +152,7 @@ describe("StructuredFilters", () => {
   });
 
   describe("one family of groups", () => {
-    it("gives Print history and Uploaded the same disclosure control as a facet group", async () => {
+    it("gives every group the same disclosure control", async () => {
       const user = userEvent.setup();
       renderFilters();
 
@@ -174,7 +174,7 @@ describe("StructuredFilters", () => {
       expect(screen.getByLabelText(/Finished on or after/)).toHaveClass("h-8", "text-xs");
     });
 
-    it("opens a group that already holds a value, and counts it", () => {
+    it("opens a group that already holds a value", () => {
       renderFilters({ uploadedAfter: "2026-01-01" });
 
       const uploaded = screen.getByRole("button", { name: /Uploaded/ });

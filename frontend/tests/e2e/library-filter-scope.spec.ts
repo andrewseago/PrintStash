@@ -61,26 +61,30 @@ async function folderOfFolders(page: Page) {
   return requests;
 }
 
-test("a folder of folders still lists only its own models until a filter is applied", async ({
-  page,
-}) => {
-  const requests = await folderOfFolders(page);
-  await page.goto("/?c=parent");
-  await expect(page.getByRole("heading", { name: "parent", exact: true })).toBeVisible();
+test.describe("filters in a folder of folders", () => {
+  test("a folder of folders still lists only its own models until a filter is applied", async ({
+    page,
+  }) => {
+    const requests = await folderOfFolders(page);
+    await page.goto("/?c=parent");
+    await expect(page.getByRole("heading", { name: "parent", exact: true })).toBeVisible();
 
-  await expect.poll(() => requests.some((r) => r.kind === "browse")).toBe(true);
-  expect(requests.filter((r) => r.kind === "browse").every((r) => r.direct === "true")).toBe(true);
-  // Facets never ask for direct models only, so options exist below this folder.
-  await expect.poll(() => requests.some((r) => r.kind === "facets")).toBe(true);
-  expect(requests.filter((r) => r.kind === "facets").every((r) => r.direct === null)).toBe(true);
-});
+    await expect.poll(() => requests.some((r) => r.kind === "browse")).toBe(true);
+    expect(requests.filter((r) => r.kind === "browse").every((r) => r.direct === "true")).toBe(
+      true,
+    );
+    // Facets never ask for direct models only, so options exist below this folder.
+    await expect.poll(() => requests.some((r) => r.kind === "facets")).toBe(true);
+    expect(requests.filter((r) => r.kind === "facets").every((r) => r.direct === null)).toBe(true);
+  });
 
-test("applying a filter in a folder of folders searches its whole subtree", async ({ page }) => {
-  const requests = await folderOfFolders(page);
-  await page.goto("/?c=parent&file_type=stl");
-  await expect(page.getByRole("heading", { name: "parent", exact: true })).toBeVisible();
+  test("applying a filter in a folder of folders searches its whole subtree", async ({ page }) => {
+    const requests = await folderOfFolders(page);
+    await page.goto("/?c=parent&file_type=stl");
+    await expect(page.getByRole("heading", { name: "parent", exact: true })).toBeVisible();
 
-  await expect.poll(() => requests.some((r) => r.kind === "browse" && r.filtered)).toBe(true);
-  const filtered = requests.filter((r) => r.kind === "browse" && r.filtered);
-  expect(filtered.every((r) => r.direct === null)).toBe(true);
+    await expect.poll(() => requests.some((r) => r.kind === "browse" && r.filtered)).toBe(true);
+    const filtered = requests.filter((r) => r.kind === "browse" && r.filtered);
+    expect(filtered.every((r) => r.direct === null)).toBe(true);
+  });
 });

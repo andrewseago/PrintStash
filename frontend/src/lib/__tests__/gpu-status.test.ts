@@ -1,3 +1,8 @@
+/*
+ * "Accessible from the API" means a device was found and at least one operation
+ * is offered on it. A device with nothing available, or capabilities without a
+ * device, must not read as a usable GPU.
+ */
 import { describe, expect, it } from "vitest";
 
 import { gpuAccessible } from "../gpu-status";

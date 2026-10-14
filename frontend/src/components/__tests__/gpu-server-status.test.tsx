@@ -13,7 +13,7 @@ function Card() {
 }
 
 describe("GpuServerStatus", () => {
-  it("shows the device the API can reach and what it can do", async () => {
+  it("shows the reachable device with its capabilities", async () => {
     renderApp(<Card />, { routes: { "GET /api/v1/system/compute": json(aComputeStatus()) } });
 
     expect(await screen.findByText("GPU accessible from the API")).toBeInTheDocument();
@@ -26,7 +26,7 @@ describe("GpuServerStatus", () => {
     expect(screen.getByText("Dense AI").parentElement).toHaveTextContent("Not qualified yet");
   });
 
-  it("says why no GPU is reachable and that work stays on the CPU", async () => {
+  it("explains why no GPU is reachable", async () => {
     renderApp(<Card />, {
       routes: {
         "GET /api/v1/system/compute": json(

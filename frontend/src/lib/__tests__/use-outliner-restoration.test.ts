@@ -1,3 +1,8 @@
+/*
+ * What a reload brings back of the collection tree. The path to the open folder
+ * always opens; of everything else, only the most recent few come back, because
+ * restoring a whole session's expansion rebuilt a tree as tall as the library.
+ */
 import { describe, expect, it } from "vitest";
 
 import { REMEMBERED_EXPANSIONS, restoredExpansions } from "../use-outliner-restoration";

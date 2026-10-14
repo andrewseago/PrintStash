@@ -9,10 +9,12 @@ import { useMockApi } from "./_setup";
 
 useMockApi();
 
-test("the tag dialog's code is fetched before anyone opens it", async ({ page }) => {
-  const chunk = page.waitForRequest(/model-tags-dialog/);
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "All Models" })).toBeVisible();
-  await chunk;
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+test.describe("library dialog preload", () => {
+  test("the tag dialog's code is fetched before anyone opens it", async ({ page }) => {
+    const chunk = page.waitForRequest(/model-tags-dialog/);
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "All Models" })).toBeVisible();
+    await chunk;
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
 });
