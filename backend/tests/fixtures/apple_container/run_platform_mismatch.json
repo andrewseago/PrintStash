@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "container",
+  "run",
+  "--detach",
+  "--progress",
+  "none",
+  "--platform",
+  "linux/arm64",
+  "--name",
+  "ps-fx-plat",
+  "nextcloud:29.0.4-apache@sha256:37d77a1857563d26f7c9a6dc8cdc306ef1118b66f0485bbf457d2f9c1d86e6ed"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: image sha256:37d77a1857563d26f7c9a6dc8cdc306ef1118b66f0485bbf457d2f9c1d86e6ed does not support required platforms\n"
+}

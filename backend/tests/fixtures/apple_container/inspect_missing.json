@@ -1,0 +1,10 @@
+{
+ "argv": [
+  "container",
+  "inspect",
+  "ps-fx-missing"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: container not found: ps-fx-missing\n"
+}

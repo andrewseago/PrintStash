@@ -1,0 +1,21 @@
+{
+ "argv": [
+  "container",
+  "exec",
+  "-e",
+  "PGPASSWORD=printstash",
+  "ps-fx-pg",
+  "psql",
+  "--username",
+  "printstash",
+  "--dbname",
+  "printstash",
+  "--host",
+  "127.0.0.1",
+  "-c",
+  "select version();"
+ ],
+ "returncode": 0,
+ "stdout": "                                            version                                             \n------------------------------------------------------------------------------------------------\n PostgreSQL 16.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit\n(1 row)\n\n",
+ "stderr": ""
+}

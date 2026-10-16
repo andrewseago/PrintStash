@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "container",
+  "image",
+  "inspect",
+  "docker.io/library/busybox:1.36.1"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: image not found: docker.io/library/busybox:1.36.1\n"
+}

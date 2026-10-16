@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "container",
+  "delete",
+  "--force",
+  "ps-fx-missing"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: internalError: \"failed to delete container\" (cause: \"notFound: \"container with ID ps-fx-missing not found\"\")\n"
+}

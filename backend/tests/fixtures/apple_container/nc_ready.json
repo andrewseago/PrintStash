@@ -1,0 +1,14 @@
+{
+ "argv": [
+  "container",
+  "exec",
+  "ps-fx-ssh",
+  "nc",
+  "-z",
+  "127.0.0.1",
+  "2222"
+ ],
+ "returncode": 0,
+ "stdout": "",
+ "stderr": "Connection to 127.0.0.1 2222 port [tcp/*] succeeded!\n"
+}
