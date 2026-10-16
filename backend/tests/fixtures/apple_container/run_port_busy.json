@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "container",
+  "run",
+  "--detach",
+  "--progress",
+  "none",
+  "--name",
+  "ps-fx-run3",
+  "-p",
+  "127.0.0.1:18083:80",
+  "nginx:alpine"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: failed to bootstrap container (cause: \"internalError: \"failed to bootstrap container ps-fx-run3 (cause: \"unknown: \"bind(descriptor:ptr:bytes:): Address already in use) (errno: 48)\"\")\"\")\n"
+}

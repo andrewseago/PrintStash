@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "container",
+  "image",
+  "pull",
+  "--platform",
+  "linux/arm64",
+  "--progress",
+  "none",
+  "postgres:16-alpine"
+ ],
+ "returncode": 0,
+ "stdout": "",
+ "stderr": ""
+}
