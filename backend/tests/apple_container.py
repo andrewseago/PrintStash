@@ -3,9 +3,10 @@
 `tests/containers.py` starts PostgreSQL, SeaweedFS, Nextcloud and OpenSSH through
 testcontainers, which needs a Docker Engine API. On a Mac with Apple's `container`
 runtime and no Docker daemon those tests stop with "no Docker daemon is reachable".
-This plugin swaps the functions that start the services for ones that drive the
-`container` CLI, so the same tests run against the same pinned images. It does not
-change what any test asserts, and it changes nothing on any other platform.
+This plugin swaps the functions that start PostgreSQL, SeaweedFS and OpenSSH for ones
+that drive the `container` CLI, so the same tests run against the same pinned images.
+It does not change what any test asserts, and it changes nothing on any other
+platform. Nextcloud is not run at all: tests that need it are Docker-only.
 
 How it fits in
 --------------
@@ -33,13 +34,13 @@ What differs from Docker
 
 A stopped apiserver, an unsupported version, a hung command and a missing Local
 Network permission each stop the run with one message naming the fix. Tests that
-only work with Docker (`bgcode`, and the two nginx end-to-end files) are named in a
-collection stop, or left out with `--apple-container-deselect-docker-only`.
+only work with Docker (`bgcode`, the two nginx end-to-end files, and every test that
+needs Nextcloud) are named in a collection stop, or left out with
+`--apple-container-deselect-docker-only`.
 """
 
 from __future__ import annotations
 
-import base64
 import dataclasses
 import enum
 import errno
@@ -99,6 +100,26 @@ DOCKER_ONLY_FILES: Final = (
 )
 DOCKER_ONLY_MARKERS: Final = ("bgcode",)
 
+# Nextcloud is not run on Apple container: its pin is an amd64-only manifest, and under
+# Rosetta the first requests of each web-server worker outlast PHP's 30 s limit. A test
+# needs it when it is in one of these files and names Nextcloud, or one of the WebDAV
+# presets that `tests/fixtures/storage_presets.py` points at it, in its parameter id or
+# its function name. Other tests in the same files (SFTP, S3, WsgiDAV) run normally.
+NEXTCLOUD_FILES: Final = (
+    "contract/modules/storage/storage_opendal/test_real_provider.py",
+    "contract/modules/storage/storage_opendal/test_webdav_cleanup.py",
+    "contract/modules/storage/test_storage_providers.py",
+    "e2e/test_remote_backup.py",
+    "e2e/test_remote_library_scan.py",
+)
+NEXTCLOUD_IDS: Final = (
+    "nextcloud",
+    "synology_webdav",
+    "qnap_webdav",
+    "hetzner_storage_box_webdav",
+    "koofr",
+)
+
 PATCHED: Final = (
     "docker_available",
     "require_docker",
@@ -122,7 +143,6 @@ RELIED_ON: Final = (
     "SEAWEEDFS_S3_PORT",
     "SEAWEEDFS_COMMAND",
     "SEAWEEDFS_READY_LOG",
-    "NEXTCLOUD_IMAGE",
     "OPENSSH_IMAGE",
     "POSTGRES_IMAGE",
     "POSTGRES_USER",
@@ -131,6 +151,12 @@ RELIED_ON: Final = (
     "STARTUP_TIMEOUT_S",
     "CONTAINER_START_ATTEMPTS",
     "_TRANSIENT_START_MARKERS",
+)
+
+NEXTCLOUD_UNSUPPORTED: Final = (
+    "Nextcloud is not run on Apple container, so this test needs Docker. Add it to "
+    "NEXTCLOUD_FILES or NEXTCLOUD_IDS in tests/apple_container.py so it is named up "
+    "front; see deploy/apple-container/README.md."
 )
 
 _APPLE_TRANSIENT_MARKERS: Final = (
@@ -188,19 +214,9 @@ def run_cli(argv: Sequence[str], timeout: int) -> subprocess.CompletedProcess[st
         ) from exc
 
 
-def _http_status(
-    url: str,
-    timeout: float,
-    *,
-    method: str = "GET",
-    auth: tuple[str, str] | None = None,
-) -> int:
-    request = urllib.request.Request(url, method=method)
-    if auth is not None:
-        token = base64.b64encode(":".join(auth).encode()).decode()
-        request.add_header("Authorization", f"Basic {token}")
+def _http_status(url: str, timeout: float) -> int:
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         return exc.code
@@ -247,7 +263,7 @@ class Seams:
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
     free_port: Callable[[], int] = _free_port
-    http_status: Callable[..., int] = _http_status
+    http_status: Callable[[str, float], int] = _http_status
     tcp_reply: Callable[[int, bytes | None, float], bytes] = _tcp_reply
     own_token: Callable[[], str] = _own_token
     owner_alive: Callable[[str], bool] = _owner_alive
@@ -269,23 +285,12 @@ class LogLine:
 
 
 @dataclasses.dataclass(frozen=True)
-class HttpOk:
-    """Ready when the request answers *status* within *timeout* seconds."""
-
-    path: str
-    status: int = 200
-    method: str = "GET"
-    auth: tuple[str, str] | None = None
-    timeout: float = 3
-
-
-@dataclasses.dataclass(frozen=True)
 class ExecOk:
     argv: tuple[str, ...]
     env: tuple[tuple[str, str], ...] = ()
 
 
-Readiness = LogLine | HttpOk | ExecOk
+Readiness = LogLine | ExecOk
 
 
 class ProbeKind(str, enum.Enum):
@@ -305,8 +310,6 @@ class ServiceSpec:
     probe: ProbeKind | None
     env: tuple[tuple[str, str], ...] = ()
     command: tuple[str, ...] = ()
-    arch: str | None = None
-    memory: str | None = None
 
 
 def registry_reference(image: str) -> str:
@@ -325,10 +328,6 @@ def registry_reference(image: str) -> str:
             f"{image} is not pinned by digest, so it cannot be re-pointed at ghcr.io"
         )
     return "ghcr.io/linuxserver/" + image.removeprefix(prefix)
-
-
-_NEXTCLOUD_AUTH: Final = ("admin", "contract-only")
-_DAV_HOME: Final = "/remote.php/dav/files/admin/"
 
 
 def build_specs(containers: ModuleType) -> dict[str, ServiceSpec]:
@@ -380,26 +379,6 @@ def build_specs(containers: ModuleType) -> dict[str, ServiceSpec]:
                 ("AWS_SECRET_ACCESS_KEY", containers.S3_SECRET_KEY),
             ),
             command=tuple(shlex.split(containers.SEAWEEDFS_COMMAND)),
-        ),
-        "nextcloud": ServiceSpec(
-            key="nextcloud",
-            image=containers.NEXTCLOUD_IMAGE,
-            container_port=80,
-            # `/status.php` answers before the DAV endpoint can: Nextcloud finishes
-            # installing after its web server is up. An authenticated listing proves
-            # the instance serves WebDAV. Under Rosetta the first writes can still
-            # stall past PHP's 30 s limit (see deploy/apple-container/README.md).
-            readiness=HttpOk(_DAV_HOME, 207, "PROPFIND", _NEXTCLOUD_AUTH, 60),
-            probe=None,
-            env=(
-                ("SQLITE_DATABASE", "nextcloud"),
-                ("NEXTCLOUD_ADMIN_USER", "admin"),
-                ("NEXTCLOUD_ADMIN_PASSWORD", "contract-only"),
-            ),
-            # The pin is an amd64-only manifest; Rosetta runs it, slowly enough to
-            # want more than the 1 GiB default.
-            arch="amd64",
-            memory="2g",
         ),
         "openssh": ServiceSpec(
             key="openssh",
@@ -572,7 +551,7 @@ class AppleRuntime:
     def start(self, spec: ServiceSpec) -> StartedService:
         self.check_available()
         self._reap_once()
-        arch = spec.arch or self.seams.arch
+        arch = self.seams.arch
         reference = self.ensure_image(spec.image, arch)
         attempts = self.containers.CONTAINER_START_ATTEMPTS
         for attempt in range(attempts):
@@ -611,8 +590,6 @@ class AppleRuntime:
             "-p",
             f"{PUBLISH_HOST}:{port}:{spec.container_port}",
         ]
-        if spec.memory is not None:
-            argv += ["--memory", spec.memory]
         for key, value in spec.env:
             argv += ["-e", f"{key}={value}"]
         argv += [reference, *spec.command]
@@ -656,20 +633,9 @@ class AppleRuntime:
             argv += [name, *readiness.argv]
             result = self.seams.cli(argv, SHORT_TIMEOUT_S)
             return result.returncode == 0, result.stderr.strip() or "exec failed"
-        if isinstance(readiness, LogLine):
-            result = self.seams.cli([CONTAINER, "logs", name], SHORT_TIMEOUT_S)
-            seen = readiness.text in result.stdout + result.stderr
-            return seen, f"log line {readiness.text!r} not seen yet"
-        try:
-            status = self.seams.http_status(
-                f"http://{PUBLISH_HOST}:{port}{readiness.path}",
-                readiness.timeout,
-                method=readiness.method,
-                auth=readiness.auth,
-            )
-        except (OSError, http.client.HTTPException) as exc:
-            return False, f"{type(exc).__name__}: {exc}"
-        return status == readiness.status, f"HTTP {status}"
+        result = self.seams.cli([CONTAINER, "logs", name], SHORT_TIMEOUT_S)
+        seen = readiness.text in result.stdout + result.stderr
+        return seen, f"log line {readiness.text!r} not seen yet"
 
     def _log_tail(self, name: str) -> str:
         result = self.seams.cli([CONTAINER, "logs", name], SHORT_TIMEOUT_S)
@@ -687,7 +653,7 @@ class AppleRuntime:
             except ConnectionResetError as exc:
                 resets += 1
                 last = exc
-            except OSError as exc:
+            except (OSError, http.client.HTTPException) as exc:
                 last = exc
             else:
                 if reply:
@@ -873,11 +839,9 @@ def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]
         )
         return f"http://{PUBLISH_HOST}:{service.port}"
 
-    def start_nextcloud() -> str:
-        service = guarded(
-            lambda: runtime.start(specs["nextcloud"]), containers.NEXTCLOUD_RESOURCE
-        )
-        return f"http://{PUBLISH_HOST}:{service.port}"
+    def start_nextcloud() -> NoReturn:
+        # Reached only by a test `NEXTCLOUD_FILES` and `NEXTCLOUD_IDS` did not name.
+        pytest.fail(NEXTCLOUD_UNSUPPORTED, pytrace=False)
 
     def start_openssh() -> tuple[str, int, str]:
         service = guarded(
@@ -917,6 +881,17 @@ def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]
     return undo
 
 
+def _names_nextcloud(item: pytest.Item) -> bool:
+    """Whether *item*'s parameter ids or function name name Nextcloud.
+
+    Parameter ids join with '-', and none of `NEXTCLOUD_IDS` contains one.
+    """
+    callspec = getattr(item, "callspec", None)
+    ids = callspec.id.split("-") if callspec is not None else []
+    name = getattr(item, "originalname", None) or item.name
+    return any(part in NEXTCLOUD_IDS for part in ids) or "nextcloud" in name.split("_")
+
+
 class AppleContainerPlugin:
     """The collection and teardown hooks that go with the runtime."""
 
@@ -926,20 +901,24 @@ class AppleContainerPlugin:
         runtime: AppleRuntime,
         tests_dir: Path,
         docker_only_files: Sequence[str] = DOCKER_ONLY_FILES,
+        nextcloud_files: Sequence[str] = NEXTCLOUD_FILES,
     ) -> None:
         self.config = config
         self.runtime = runtime
         self.tests_dir = tests_dir
         self.docker_only_files = tuple(docker_only_files)
+        self.nextcloud_files = tuple(nextcloud_files)
         self.deselected: set[str] = set()
         self.opt_in = bool(config.getoption(DESELECT_OPTION))
         missing = [
-            name for name in self.docker_only_files if not (tests_dir / name).is_file()
+            name
+            for name in (*self.docker_only_files, *self.nextcloud_files)
+            if not (tests_dir / name).is_file()
         ]
         if missing:
             raise pytest.UsageError(
-                f"tests/apple_container.py lists Docker-only files that are gone: "
-                f"{missing}. Update DOCKER_ONLY_FILES."
+                f"tests/apple_container.py lists files that are gone: {missing}. "
+                "Update DOCKER_ONLY_FILES or NEXTCLOUD_FILES."
             )
 
     def _reason(self, item: pytest.Item) -> str | None:
@@ -950,6 +929,9 @@ class AppleContainerPlugin:
         for name in self.docker_only_files:
             if path == self.tests_dir / name:
                 return f"in {name}"
+        for name in self.nextcloud_files:
+            if path == self.tests_dir / name and _names_nextcloud(item):
+                return "needs Nextcloud"
         return None
 
     @pytest.hookimpl(trylast=True)
@@ -1022,7 +1004,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help=(
             "Apple container: leave out the tests that need a Docker Engine API "
-            "(bgcode, the nginx end-to-end files) instead of stopping the run."
+            "(bgcode, the nginx end-to-end files, anything that needs Nextcloud) "
+            "instead of stopping the run."
         ),
     )
 

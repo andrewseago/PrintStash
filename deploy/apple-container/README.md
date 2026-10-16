@@ -1,9 +1,10 @@
 # Test services on Apple `container`
 
-This fork can run the suite's real services (PostgreSQL, SeaweedFS, Nextcloud,
-OpenSSH) on Apple's [`container`](https://github.com/apple/container) runtime
-instead of Docker. It is a local development path for an Apple-silicon Mac. CI
-stays on Docker: hosted runners cannot run `container`.
+This fork can run the suite's real services (PostgreSQL, SeaweedFS and OpenSSH) on
+Apple's [`container`](https://github.com/apple/container) runtime instead of Docker.
+It is a local development path for an Apple-silicon Mac. CI stays on Docker: hosted
+runners cannot run `container`. Nextcloud is not run on it at all; the tests that need
+it are Docker-only.
 
 `backend/conftest.py` loads `backend/tests/apple_container.py`, which replaces the
 functions in `tests/containers.py` that start the services. On any platform other
@@ -48,7 +49,8 @@ same ones Docker runs.
 
 | Marker or area | On Apple container |
 | --- | --- |
-| `postgres`, `s3`, `remote_storage` | yes, through the adapter |
+| `postgres`, `s3`, `remote_storage` | yes, through the adapter, except the tests that need Nextcloud |
+| tests that need Nextcloud: the `nextcloud` parametrizations and the WebDAV presets (`synology_webdav`, `qnap_webdav`, `hetzner_storage_box_webdav`, `koofr`) in `test_real_provider.py`, `test_webdav_cleanup.py`, `test_storage_providers.py`, `test_remote_backup.py` and `test_remote_library_scan.py` | no: Nextcloud is not run on Apple container |
 | `bgcode` | no: builds the converter with `docker buildx` |
 | `tests/e2e/test_search_image_proxy.py`, `tests/e2e/test_search_query_logs.py` | no: run nginx with `docker run --network host` |
 | the image lane (`./scripts/test.sh image`), the Playwright real-backend, delivery and startup suites, release scripts | no: Docker |
@@ -61,22 +63,18 @@ everything else, leave them out explicitly:
 ./scripts/test.sh full-resources --apple-container-deselect-docker-only
 ```
 
-They are named in the terminal summary, not hidden. For `bgcode` alone, a locally
-built converter can be used instead:
-`VAULT_BGCODE_EXECUTABLE=/path/to/bgcode` (the tests build the official converter
-through Docker, so the marker is still left out).
+They are named in the terminal summary, not hidden. The `bgcode` tests build the
+official converter with `docker buildx`; there is no Apple path for that.
 
 ## Known limits
 
 Measured on an M5 Max, macOS 27.2, `container` 1.5.0:
 
-- **Nextcloud is unreliable.** Its pin is an amd64-only manifest, so it runs under
-  Rosetta. The first requests of each web-server worker take tens of seconds, and a
-  request that crosses PHP's 30 s limit comes back as a `200` error page. The
-  adapter waits for an authenticated WebDAV listing, which covers the install but not
-  every cold worker. Tests that use the Nextcloud container (the `nextcloud`
-  parametrizations and the WebDAV presets in `test_storage_providers.py`) fail or
-  stall intermittently; the WsgiDAV-backed and OpenSSH-backed contracts pass.
+- **Nextcloud is not run.** Its pin is an amd64-only manifest, so it would run under
+  Rosetta, where the first requests of each web-server worker outlast PHP's 30 s limit
+  and come back as a `200` error page. Rather than run it unreliably, the tests that
+  need it are Docker-only. A test that reaches it without being named fails with a
+  message saying so.
 - **Many tests fail on this Mac with or without the adapter**, because of macOS, not
   the runtime: the native mesh and inference workers exit non-zero (`worker_failed`),
   the local filesystem probe reports no verified delete (so storage runs in the
@@ -90,11 +88,10 @@ Measured on an M5 Max, macOS 27.2, `container` 1.5.0:
 - Endpoints are `127.0.0.1:<port>`, never `localhost`: one address is published per
   port.
 - The port forwarder accepts a connection before the service listens, so readiness
-  is the service's own signal (a `psql` query, a log line, `/status.php`, `nc` inside
-  the container), followed by one protocol probe through the published port.
+  is the service's own signal (a `psql` query, a log line, `nc` inside the container),
+  followed by one protocol probe through the published port.
 - `lscr.io/linuxserver/...@sha256:<digest>` is pulled from `ghcr.io` under the same
   digest. 1.5.0 refuses the `lscr.io` credential exchange.
-- Nextcloud's pin is an amd64-only manifest and runs under Rosetta with 2 GiB.
 - Every container is labelled `printstash.test.owner=<pid>-<start time>`. A reaper
   removes `printstash-test-*` containers whose owner is gone, the way Ryuk does for
   Docker. After a hard kill, the next run cleans up.

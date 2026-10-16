@@ -1,8 +1,10 @@
 """The Apple `container` adapter starts the suite's services and fails with the fix.
 
 `tests/apple_container.py` replaces the functions in `tests/containers.py` that
-start PostgreSQL, SeaweedFS, Nextcloud and OpenSSH, so the resource-marked tests run
-on a Mac that has Apple's `container` runtime and no Docker daemon. These tests hold
+start PostgreSQL, SeaweedFS, Nextcloud and OpenSSH. The adapter runs PostgreSQL,
+SeaweedFS and OpenSSH on `container` and leaves Nextcloud out, so the resource-marked
+tests run on a Mac that has Apple's `container` runtime and no Docker daemon.
+Tests that need Nextcloud are named as Docker-only. These tests hold
 the adapter to what it promises without needing that runtime: a fake `container` CLI
 replays output recorded from a real 1.5.0 install (`tests/fixtures/apple_container/`,
 fake paths, addresses and MACs), the clock and the network are injected, and the
@@ -157,13 +159,11 @@ class Network:
         self.http: list[Any] = []
         self.tcp: list[Any] = []
         self.urls: list[str] = []
-        self.requests: list[tuple[str, float, dict[str, Any]]] = []
         self.http_default: Any = 200
         self.tcp_default: Any = b"N"
 
-    def http_status(self, url: str, timeout: float, **request: Any) -> int:
+    def http_status(self, url: str, timeout: float) -> int:
         self.urls.append(url)
-        self.requests.append((url, timeout, request))
         result = self.http.pop(0) if self.http else self.http_default
         if isinstance(result, BaseException):
             raise result
@@ -472,7 +472,6 @@ def run_argv(
     platform: str,
     image: str,
     tail: list[str],
-    memory: str | None = None,
 ) -> list[str]:
     return [
         "container",
@@ -488,7 +487,6 @@ def run_argv(
         f"printstash.test.owner={OWNER}",
         "-p",
         f"127.0.0.1:{port}:{tail[0]}",
-        *(["--memory", memory] if memory else []),
         *tail[1:],
         image,
     ]
@@ -528,17 +526,6 @@ class TestStart:
             "-master.volumeSizeLimitMB=8",
             "-master.telemetry=false",
         )
-
-    def test_runs_nextcloud_on_amd64_with_two_gigabytes(
-        self, runtime: ac.AppleRuntime, daemon: FakeDaemon, network: Network
-    ) -> None:
-        network.http_default = 207
-
-        runtime.start(runtime.specs["nextcloud"])
-
-        argv = daemon.runs()[0]
-        assert argv[argv.index("--platform") + 1] == "linux/amd64"
-        assert argv[argv.index("--memory") + 1] == "2g"
 
     def test_runs_openssh_from_ghcr(
         self, runtime: ac.AppleRuntime, daemon: FakeDaemon, network: Network
@@ -615,7 +602,7 @@ class TestStart:
         with pytest.raises(
             ac.StartFailure, match="does not support required platforms"
         ):
-            runtime.start(runtime.specs["nextcloud"])
+            runtime.start(runtime.specs["postgres"])
 
         assert len(daemon.runs()) == 1
 
@@ -658,41 +645,6 @@ class TestReadiness:
         runtime.start(runtime.specs["seaweedfs"])
 
         assert clock.slept == [1]
-
-    def test_waits_for_nextcloud_to_answer_a_dav_listing_with_207(
-        self, runtime: ac.AppleRuntime, network: Network, clock: Clock
-    ) -> None:
-        network.http = [ConnectionResetError(54, "Connection reset by peer"), 200, 207]
-
-        runtime.start(runtime.specs["nextcloud"])
-
-        assert [url for url, _, _ in network.requests[:3]] == [
-            "http://127.0.0.1:20001/remote.php/dav/files/admin/"
-        ] * 3
-        assert clock.slept == [1, 1]
-
-    def test_sends_the_dav_listing_as_an_authenticated_propfind(
-        self, runtime: ac.AppleRuntime, network: Network
-    ) -> None:
-        network.http = [207]
-
-        runtime.start(runtime.specs["nextcloud"])
-
-        assert network.requests[0][1:] == (
-            60,
-            {"method": "PROPFIND", "auth": ("admin", "contract-only")},
-        )
-
-    def test_treats_a_malformed_http_reply_as_not_ready(
-        self, runtime: ac.AppleRuntime, network: Network
-    ) -> None:
-        import http.client
-
-        network.http = [http.client.BadStatusLine("garbage"), 207]
-
-        runtime.start(runtime.specs["nextcloud"])
-
-        assert len(network.requests) == 2
 
     def test_waits_for_openssh_nc_before_probing_the_banner(
         self, runtime: ac.AppleRuntime, daemon: FakeDaemon, network: Network
@@ -785,6 +737,16 @@ class TestProbe:
         with pytest.raises(ac.StartFailure, match="did not answer"):
             runtime.start(runtime.specs["postgres"])
 
+    def test_reports_a_malformed_http_reply_as_a_start_failure(
+        self, runtime: ac.AppleRuntime, network: Network
+    ) -> None:
+        import http.client
+
+        network.http = [http.client.BadStatusLine("garbage")] * 3
+
+        with pytest.raises(ac.StartFailure, match="did not answer"):
+            runtime.start(runtime.specs["seaweedfs"])
+
     def test_rejects_a_server_that_does_not_speak_ssh(
         self, runtime: ac.AppleRuntime, network: Network
     ) -> None:
@@ -873,12 +835,10 @@ class TestInstalledStarters:
         host = installed._resolved["s3_private"].split("//")[1].split(":")[0]
         assert not _is_loopback(host)
 
-    def test_the_public_endpoint_is_a_loopback_address(
-        self, installed: ModuleType, network: Network
+    def test_the_public_s3_endpoint_is_a_loopback_address(
+        self, installed: ModuleType
     ) -> None:
-        network.http_default = 207
-
-        host = installed._start_nextcloud().split("//")[1].split(":")[0]
+        host = installed._start_seaweedfs().split("//")[1].split(":")[0]
 
         assert _is_loopback(host)
 
@@ -939,6 +899,14 @@ class TestInstalledStarters:
         with pytest.raises(pytest.exit.Exception, match="Local Network"):
             installed._start_postgres()
 
+    def test_a_test_that_reaches_nextcloud_fails_naming_the_decision(
+        self, installed: ModuleType, daemon: FakeDaemon
+    ) -> None:
+        with pytest.raises(pytest.fail.Exception, match="not run on Apple container"):
+            installed.nextcloud_endpoint()
+
+        assert daemon.runs() == []
+
     def test_reports_docker_as_available_when_the_runtime_is_up(
         self, installed: ModuleType
     ) -> None:
@@ -993,12 +961,10 @@ class TestReaper:
         assert daemon.deleted == []
 
     def test_reaps_once_per_process(
-        self, runtime: ac.AppleRuntime, daemon: FakeDaemon, network: Network
+        self, runtime: ac.AppleRuntime, daemon: FakeDaemon
     ) -> None:
-        network.http_default = 207
-
         runtime.start(runtime.specs["postgres"])
-        runtime.start(runtime.specs["nextcloud"])
+        runtime.start(runtime.specs["pgvector"])
 
         assert daemon.verbs().count("list") == 1
 
@@ -1075,8 +1041,12 @@ class TestCaptures:
         assert "andrewseago" not in text
 
 
-def project(root: Path, *, tests: dict[str, str]) -> Path:
-    """A throwaway project whose conftest installs the adapter against a recorder."""
+def project(root: Path, *, tests: dict[str, str], omit: tuple[str, ...] = ()) -> Path:
+    """A throwaway project whose conftest installs the adapter against a recorder.
+
+    Every file the plugin lists exists, empty unless *tests* gives it content, except
+    those in *omit*.
+    """
     (root / "pytest.ini").write_text(
         "[pytest]\naddopts =\nmarkers =\n    bgcode: needs docker\n    e2e: tier\n"
     )
@@ -1098,6 +1068,11 @@ def project(root: Path, *, tests: dict[str, str]) -> Path:
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source)
+    for name in (*ac.DOCKER_ONLY_FILES, *ac.NEXTCLOUD_FILES):
+        path = root / name
+        if name not in omit and not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("")
     return root
 
 
@@ -1213,7 +1188,11 @@ class TestDockerOnlyTests:
 
     def test_a_listed_file_that_is_gone_is_a_usage_error(self, tmp_path: Path) -> None:
         files = {k: v for k, v in DOCKER_ONLY.items() if "image_proxy" not in k}
-        root = project(tmp_path, tests={"test_plain.py": PLAIN, **files})
+        root = project(
+            tmp_path,
+            tests={"test_plain.py": PLAIN, **files},
+            omit=("e2e/test_search_image_proxy.py",),
+        )
 
         result = pytest_in(root)
 
@@ -1269,6 +1248,153 @@ def _env_pairs(
     }
 
 
+NEXTCLOUD_TESTS = {
+    "contract/modules/storage/storage_opendal/test_real_provider.py": (
+        "import pytest\n\n"
+        "def test_nextcloud_preserves_the_original():\n    pass\n\n"
+        "@pytest.mark.parametrize('provider', ['nextcloud', 'sftp'])\n"
+        "def test_materializable(provider):\n    pass\n"
+    ),
+    "contract/modules/storage/storage_opendal/test_webdav_cleanup.py": (
+        "import pytest\n\n"
+        "@pytest.fixture(params=['nextcloud', 'wsgidav'])\n"
+        "def endpoint(request):\n    return request.param\n\n"
+        "def test_cleanup(endpoint):\n    pass\n"
+    ),
+    "contract/modules/storage/test_storage_providers.py": (
+        "import pytest\n\n"
+        "@pytest.mark.parametrize('provider', ['synology_webdav', 'koofr', 'minio', "
+        "'hetzner_storage_box'])\n"
+        "def test_preserves_bytes(provider):\n    pass\n"
+    ),
+}
+NEXTCLOUD_NAMED = (
+    "test_real_provider.py::test_nextcloud_preserves_the_original",
+    "test_real_provider.py::test_materializable[nextcloud]",
+    "test_webdav_cleanup.py::test_cleanup[nextcloud]",
+    "test_storage_providers.py::test_preserves_bytes[synology_webdav]",
+    "test_storage_providers.py::test_preserves_bytes[koofr]",
+)
+NEXTCLOUD_UNNAMED = (
+    "test_real_provider.py::test_materializable[sftp]",
+    "test_webdav_cleanup.py::test_cleanup[wsgidav]",
+    "test_storage_providers.py::test_preserves_bytes[minio]",
+    "test_storage_providers.py::test_preserves_bytes[hetzner_storage_box]",
+)
+
+
+class TestNextcloudTests:
+    def test_a_run_that_selects_one_stops_naming_it(self, tmp_path: Path) -> None:
+        root = project(tmp_path, tests=NEXTCLOUD_TESTS)
+
+        result = pytest_in(root)
+
+        output = result.stdout + result.stderr
+        assert result.returncode == 1, output
+        assert [name for name in NEXTCLOUD_NAMED if name not in output] == [], output
+
+    def test_the_stop_leaves_out_the_tests_that_do_not_need_it(
+        self, tmp_path: Path
+    ) -> None:
+        root = project(tmp_path, tests=NEXTCLOUD_TESTS)
+
+        result = pytest_in(root)
+
+        output = result.stdout + result.stderr
+        assert [name for name in NEXTCLOUD_UNNAMED if name in output] == [], output
+
+    def test_the_stop_says_why(self, tmp_path: Path) -> None:
+        root = project(tmp_path, tests=NEXTCLOUD_TESTS)
+
+        result = pytest_in(root)
+
+        assert "(needs Nextcloud)" in result.stdout + result.stderr
+
+    def test_the_opt_in_flag_leaves_them_out(self, tmp_path: Path) -> None:
+        root = project(tmp_path, tests=NEXTCLOUD_TESTS)
+
+        result = pytest_in(root, ac.DESELECT_OPTION)
+
+        assert "4 passed, 5 deselected" in result.stdout, result.stdout
+
+    def test_the_summary_names_each_one_left_out(self, tmp_path: Path) -> None:
+        root = project(tmp_path, tests=NEXTCLOUD_TESTS)
+
+        result = pytest_in(root, ac.DESELECT_OPTION)
+
+        assert [n for n in NEXTCLOUD_NAMED if n not in result.stdout] == [], (
+            result.stdout
+        )
+
+    def test_a_nextcloud_name_in_another_file_runs_normally(
+        self, tmp_path: Path
+    ) -> None:
+        root = project(
+            tmp_path,
+            tests={"test_config.py": "def test_nextcloud_config_parses():\n    pass\n"},
+        )
+
+        result = pytest_in(root)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_a_listed_file_that_is_gone_is_a_usage_error(self, tmp_path: Path) -> None:
+        root = project(tmp_path, tests={})
+        (root / ac.NEXTCLOUD_FILES[0]).unlink()
+
+        result = pytest_in(root)
+
+        assert result.returncode == 4, result.stdout + result.stderr
+        assert ac.NEXTCLOUD_FILES[0] in result.stderr
+
+
+# Files that mention what reaches Nextcloud and do not themselves need it.
+NOT_NEXTCLOUD = {
+    "contract/modules/conftest.py": "defines the cleanup_endpoint fixture",
+    "contract/modules/similarity/test_processing.py": "uses the seaweedfs preset only",
+    "containers.py": "the upstream starter",
+    "fixtures/storage_presets.py": "defines real_preset_configuration",
+    "repo/test_apple_container.py": "this file",
+}
+
+
+class TestNextcloudInventory:
+    def test_the_ids_are_nextcloud_plus_every_webdav_preset(self) -> None:
+        from app.modules.storage.storage_providers import PRESETS
+
+        webdav = {
+            name for name, preset in PRESETS.items() if preset["transport"] == "webdav"
+        }
+
+        assert set(ac.NEXTCLOUD_IDS) == {"nextcloud"} | webdav, (
+            "a WebDAV preset was added or removed: update NEXTCLOUD_IDS"
+        )
+
+    def test_every_file_that_reaches_nextcloud_is_listed_or_explained(self) -> None:
+        reach = ("nextcloud_endpoint", "real_preset_configuration", "cleanup_endpoint")
+        users = {
+            path.relative_to(TESTS_DIR).as_posix()
+            for path in TESTS_DIR.rglob("*.py")
+            if any(name in path.read_text() for name in reach)
+        }
+
+        assert users - set(ac.NEXTCLOUD_FILES) - set(NOT_NEXTCLOUD) == set(), (
+            "a test file now reaches Nextcloud: list it in NEXTCLOUD_FILES or explain "
+            "it in NOT_NEXTCLOUD"
+        )
+
+    def test_every_listed_file_really_reaches_nextcloud(self) -> None:
+        reach = ("nextcloud_endpoint", "real_preset_configuration", "cleanup_endpoint")
+
+        stale = [
+            name
+            for name in ac.NEXTCLOUD_FILES
+            if not any(word in (TESTS_DIR / name).read_text() for word in reach)
+        ]
+
+        assert stale == []
+
+
 class TestSpecsMatchContainers:
     @pytest.fixture
     def source(self) -> tuple[ast.Module, dict[str, str]]:
@@ -1279,7 +1405,6 @@ class TestSpecsMatchContainers:
         ("service", "function"),
         [
             pytest.param("seaweedfs", "_start_seaweedfs", id="seaweedfs"),
-            pytest.param("nextcloud", "_start_nextcloud", id="nextcloud"),
             pytest.param("openssh", "_start_openssh", id="openssh"),
         ],
     )
@@ -1317,7 +1442,6 @@ class TestSpecsMatchContainers:
         ("service", "function", "port"),
         [
             pytest.param("seaweedfs", "_start_seaweedfs", 8333, id="seaweedfs"),
-            pytest.param("nextcloud", "_start_nextcloud", 80, id="nextcloud"),
             pytest.param("openssh", "_start_openssh", 2222, id="openssh"),
         ],
     )
@@ -1438,7 +1562,7 @@ class TestOutOfPytestConsumers:
             "tests/e2e/runtime_image.py",
             "tests/fakes/browser_delivery.py",
             "tests/fakes/s3_delivery.py",
-        } <= importers | {"tests/e2e/runtime_image.py"}
+        } <= importers
 
 
 class TestBackendConftest:
