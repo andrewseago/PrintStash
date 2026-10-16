@@ -776,7 +776,16 @@ class AppleRuntime:
                     owner = entry["configuration"].get("labels", {}).get(OWNER_LABEL)
                     if not name.startswith(NAME_PREFIX) or owner is None:
                         continue
-                    if not self.seams.owner_alive(owner):
+                    try:
+                        alive = self.seams.owner_alive(owner)
+                    except ValueError:
+                        # A label this adapter did not write: not ours to remove.
+                        warnings.warn(
+                            f"{name} has an unreadable owner label {owner!r}",
+                            stacklevel=2,
+                        )
+                        continue
+                    if not alive:
                         self.delete(name)
         except Exception as exc:  # the reaper is best effort by contract
             warnings.warn(f"container reaper skipped: {exc!r}", stacklevel=2)

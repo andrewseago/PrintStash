@@ -964,6 +964,22 @@ class TestReaper:
 
         assert "printstash-test-postgres-1-aaaa0000" not in daemon.deleted
 
+    def test_keeps_a_container_whose_owner_label_is_unreadable(
+        self, runtime: ac.AppleRuntime, daemon: FakeDaemon
+    ) -> None:
+        runtime.seams = ac.Seams(
+            **{**runtime.seams.__dict__, "owner_alive": ac._owner_alive}
+        )
+        daemon.listing = [
+            entry("printstash-test-postgres-1-bad00000", "not-a-pid"),
+            entry("printstash-test-postgres-2-dead0000", "1-1.00"),
+        ]
+
+        with pytest.warns(UserWarning, match="unreadable owner label"):
+            runtime.start(runtime.specs["postgres"])
+
+        assert daemon.deleted == ["printstash-test-postgres-2-dead0000"]
+
     def test_leaves_containers_it_did_not_start(
         self, runtime: ac.AppleRuntime, daemon: FakeDaemon
     ) -> None:
