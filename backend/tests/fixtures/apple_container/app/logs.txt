@@ -1,0 +1,5 @@
+2026-01-01T00:00:00Z [INFO] app.bootstrap.work: background work started role=all executor=all-printstash-9adb62b2 lanes=all pid=28
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-01-01T00:00:00Z [INFO] app.modules.work.jobs: job_terminal job_id=d576a8955ed44c848709bb0a88e0db7c kind=notifications.retention duration_s=0.006 result=complete
+2026-01-01T00:00:00Z [INFO] app.modules.work.jobs: job_terminal job_id=f6dd3ded1d534a1eab5580ab75b8db4f kind=work.housekeeping duration_s=0.030 result=complete
