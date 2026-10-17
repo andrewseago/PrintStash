@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- An idle server on SQLite no longer uses more CPU the longer it runs. Each
+  background-work lane keeps checking for queued work on a short interval, and on
+  SQLite every check read the engine's entire workflow history, which the
+  default 7-day retention grows into tens of thousands of rows. On a low-power
+  mini PC that kept the server near 30% CPU with nothing to do. The checks now
+  use an index (DBOS 3.3). PostgreSQL was not affected.
+
+- **Background work no longer gets stuck after a restart.** Stopping or
+  restarting PrintStash while a long job ran (a mesh, a backup, an import)
+  could leave that job "running" forever. On lanes that run one job at a time,
+  such as backups and maintenance, nothing else on the lane ran again until the
+  next upgrade. Such jobs are now picked up and rerun after the restart. With
+  separate worker processes, a worker that started after the backup being
+  restored now registers itself again instead of having its jobs rerun.
+
+- A job whose work had finished is no longer marked **failed** because the
+  database was briefly busy (a locked SQLite file, a PostgreSQL restart) while
+  its result was being saved. Saving the result is retried.
+
+- Cancelling a running job no longer lets its lane start another job before the
+  cancelled one has actually stopped, so lanes sized to the server's memory stay
+  within their limit. A cancelled job whose work never stops still frees its
+  lane after `VAULT_JOBS_EXECUTOR_STALE_SECONDS` (2 minutes by default).
+
+- The admin **Background work** page and each reconcile pass read lane depth
+  and active work without scanning the engine's whole history on SQLite (137 ms
+  per read at 200,000 history rows, now under a millisecond).
+
+- With a pinned executor id, a job that crashes the server is retried as many
+  times as `VAULT_JOBS_MAX_RESUBMITS` allows (3 by default), instead of up to
+  100 restarts.
+
+- Background work does less redundant database work: submitting a job no
+  longer reads the engine first, creating one no longer reads it back, the
+  periodic check skips the 12 kinds of requested work that have nothing to
+  repair (a third of its engine runs, and of the history they leave behind), and
+  its two sweeps share one read. Per job that is about 10% fewer database
+  statements on each of the engine and application databases.
+
+- A reconcile interval that does not divide evenly into a minute, hour or day
+  (for example 90 seconds) now runs at an even cadence rounded down, instead of
+  firing twice in quick succession.
+
 - Settings no longer re-measures **Storage insights** or re-checks **Server
   GPU** every time you open them. Both took several seconds to load; each
   answer is now kept for the session. Storage insights are measured again after
