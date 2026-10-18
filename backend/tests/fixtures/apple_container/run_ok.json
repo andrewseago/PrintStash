@@ -1,0 +1,27 @@
+{
+ "argv": [
+  "container",
+  "run",
+  "--detach",
+  "--progress",
+  "none",
+  "--platform",
+  "linux/arm64",
+  "--name",
+  "ps-fx-pg",
+  "--label",
+  "printstash.test.owner=4242-1700000000.250",
+  "-p",
+  "127.0.0.1:18432:5432",
+  "-e",
+  "POSTGRES_USER=printstash",
+  "-e",
+  "POSTGRES_PASSWORD=printstash",
+  "-e",
+  "POSTGRES_DB=printstash",
+  "postgres:16-alpine"
+ ],
+ "returncode": 0,
+ "stdout": "ps-fx-pg\n",
+ "stderr": ""
+}

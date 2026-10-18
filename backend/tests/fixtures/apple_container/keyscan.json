@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "ssh-keyscan",
+  "-p",
+  "12222",
+  "127.0.0.1"
+ ],
+ "returncode": 0,
+ "stdout": "# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n[127.0.0.1]:12222 ssh-rsa AAAAfixture\n# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n[127.0.0.1]:12222 ecdsa-sha2-nistp256 AAAAfixture\n# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n[127.0.0.1]:12222 ssh-ed25519 AAAAfixture\n# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n# 127.0.0.1:12222 SSH-2.0-OpenSSH_10.3\n",
+ "stderr": ""
+}

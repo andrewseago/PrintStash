@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "container",
+  "system",
+  "status",
+  "--format",
+  "json"
+ ],
+ "returncode": 0,
+ "stdout": "{\"client\":{\"appName\":\"container\",\"build\":\"release\",\"commit\":\"d265d669ecae041bf338cb3b39c4118316d138f0\",\"version\":\"1.5.0\"},\"host\":{\"architecture\":\"arm64\",\"cpus\":18,\"operatingSystem\":\"Version 27.2 (Build 26B5112a)\"},\"paths\":{\"appRoot\":\"/Users/example/Library/Application Support/com.apple.container/\",\"installRoot\":\"/usr/local/\"},\"resources\":{\"containersRunning\":1,\"containersTotal\":1,\"images\":3},\"server\":{\"appName\":\"container-apiserver\",\"build\":\"release\",\"commit\":\"d265d669ecae041bf338cb3b39c4118316d138f0\",\"version\":\"1.5.0\"},\"status\":\"running\"}\n",
+ "stderr": ""
+}
