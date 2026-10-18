@@ -42,6 +42,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import urllib.error
 import warnings
 from collections.abc import Callable
@@ -501,6 +502,39 @@ class TestEnsureImage:
         runtime.ensure_image("postgres:16-alpine", "arm64")
 
         assert daemon.verbs() == ["image inspect"]
+
+    def test_pulls_nothing_when_another_process_pulled_it_meanwhile(
+        self, runtime: ac.AppleRuntime, daemon: FakeDaemon
+    ) -> None:
+        def cli(argv: Any, timeout: int) -> subprocess.CompletedProcess[str]:
+            result = daemon(argv, timeout)
+            if tuple(argv[1:3]) == ("image", "inspect"):
+                # The other process finishes its pull while this one waits for the lock.
+                daemon.present.add(argv[3])
+            return result
+
+        runtime.seams = ac.Seams(**{**runtime.seams.__dict__, "cli": cli})
+
+        runtime.ensure_image("postgres:16-alpine", "arm64")
+
+        assert daemon.verbs() == ["image inspect", "image inspect"]
+
+    def test_waits_for_another_process_pulling_the_same_image(
+        self, runtime: ac.AppleRuntime, daemon: FakeDaemon
+    ) -> None:
+        digest = hashlib.sha256(b"postgres:16-alpine").hexdigest()[:16]
+        held = ac._open_lock(runtime.seams.lock_dir, f"pull-{digest}.lock")
+        fcntl.flock(held, fcntl.LOCK_EX)
+        waiter = threading.Thread(
+            target=runtime.ensure_image, args=("postgres:16-alpine", "arm64")
+        )
+        waiter.start()
+        waiter.join(0.5)
+        pulls_while_held = daemon.verbs().count("image pull")
+        os.close(held)
+        waiter.join(10)
+
+        assert (pulls_while_held, daemon.verbs().count("image pull")) == (0, 1)
 
     def test_pulls_the_requested_platform_without_progress(
         self, runtime: ac.AppleRuntime, daemon: FakeDaemon
@@ -2177,6 +2211,27 @@ class TestOutOfPytestConsumers:
             "tests/fakes/browser_delivery.py",
             "tests/fakes/s3_delivery.py",
         } <= importers
+
+
+class TestEscapeHatch:
+    def test_disabling_the_plugin_removes_its_option(self) -> None:
+        environment = {
+            k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")
+        }
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-p", "no:tests.apple_container", "--collect-only", "-q",
+             ac.DESELECT_OPTION, str(Path(__file__))],
+            cwd=REPO_ROOT / "backend",
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )  # fmt: skip
+
+        assert result.returncode == 4, result.stdout + result.stderr
+        assert f"unrecognized arguments: {ac.DESELECT_OPTION}" in result.stderr
 
 
 class TestBackendConftest:
