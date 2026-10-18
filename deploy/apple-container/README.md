@@ -11,6 +11,8 @@ functions in `tests/containers.py` that start the services. On any platform othe
 than macOS it does nothing. The tests, their markers and the pinned images are the
 same ones Docker runs.
 
+To run the app itself on `container`, see [APP.md](APP.md).
+
 ## Setup (once)
 
 1. **Install `container` 1.5.x** (`>=1.5.0,<1.6`; the adapter checks both the client
