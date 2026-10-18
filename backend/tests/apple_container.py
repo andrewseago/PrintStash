@@ -16,10 +16,11 @@ How it fits in
   module. The rest of that module (`_resolve`, `_resolved`, `_started`,
   `shutdown_containers`, `fresh_postgres_database`, `s3_private_endpoint`) stays
   upstream's, so caching, teardown and the S3 failure-domain logic are unchanged.
-  A rename upstream makes `install` raise naming what is missing.
-* Nothing runs a `container` command at import, configure or collection. The first
-  command is the availability check of the first selected resource, so a run that
-  starts nothing makes no calls.
+  When upstream renames a name the adapter relies on, nothing is patched, and a run
+  that selects a resource-marked test stops naming what is missing; other runs go on.
+* Nothing runs a `container` command at import or configure. The first command is
+  the availability check, in `pytest_collection_finish`, when a selected test carries
+  a resource marker, so a run that selects none makes no calls.
 
 What differs from Docker
 ------------------------
@@ -30,10 +31,13 @@ What differs from Docker
   probe through the published port.
 * `lscr.io` images are pulled from `ghcr.io` under the same digest: 1.5.0 refuses the
   `lscr.io` credential exchange.
-* There is no Ryuk. A reaper removes containers whose owning process is gone.
+* There is no Ryuk. The first service start of a run removes containers whose owning
+  process is gone, and each run removes its own at the end.
 
-A stopped apiserver, an unsupported version, a hung command and a missing Local
-Network permission each stop the run with one message naming the fix. Tests that
+A stopped apiserver, an unsupported version, a command that hangs while checking or
+starting a service, and a missing Local Network permission each stop the run with one
+message naming the fix, under xdist too. A service that never becomes ready is
+removed, and later tests that need it fail at once instead of starting another. Tests that
 only work with Docker (`bgcode`, the two nginx end-to-end files, and every test that
 needs Nextcloud) are named in a collection stop, or left out with
 `--apple-container-deselect-docker-only`.
@@ -49,7 +53,6 @@ import hashlib
 import http.client
 import json
 import os
-import platform as host_platform
 import re
 import secrets
 import shlex
@@ -57,7 +60,6 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -120,6 +122,9 @@ NEXTCLOUD_IDS: Final = (
     "koofr",
 )
 
+# The resource markers `tests/conftest.py` checks; a guard test keeps them equal.
+RESOURCE_MARKERS: Final = ("bgcode", "postgres", "remote_storage", "s3")
+
 PATCHED: Final = (
     "docker_available",
     "require_docker",
@@ -151,12 +156,16 @@ RELIED_ON: Final = (
     "STARTUP_TIMEOUT_S",
     "CONTAINER_START_ATTEMPTS",
     "_TRANSIENT_START_MARKERS",
+    "POSTGRES_RESOURCE",
+    "S3_RESOURCE",
+    "OPENSSH_RESOURCE",
 )
 
 NEXTCLOUD_UNSUPPORTED: Final = (
-    "Nextcloud is not run on Apple container, so this test needs Docker. Add it to "
-    "NEXTCLOUD_FILES or NEXTCLOUD_IDS in tests/apple_container.py so it is named up "
-    "front; see deploy/apple-container/README.md."
+    "Nextcloud is not run on Apple container, so this test needs Docker. For it to be "
+    "named at collection instead, its file must be in NEXTCLOUD_FILES and its name or a "
+    "parameter id must contain one of NEXTCLOUD_IDS (tests/apple_container.py); see "
+    "deploy/apple-container/README.md."
 )
 
 _APPLE_TRANSIENT_MARKERS: Final = (
@@ -243,10 +252,18 @@ def _owner_token(pid: int) -> str:
     return f"{pid}-{psutil.Process(pid).create_time():.2f}"
 
 
+OWNER_TOKEN: Final = re.compile(r"(\d+)-(\d+\.\d{2})")
+
+
 def _owner_alive(token: str) -> bool:
-    """Whether the process that wrote *token* still exists as the same process."""
-    pid_text, _, _start = token.partition("-")
-    pid = int(pid_text)
+    """Whether the process that wrote *token* still exists as the same process.
+
+    Raises ValueError for a token this adapter did not write, so it is left alone.
+    """
+    match = OWNER_TOKEN.fullmatch(token)
+    if match is None:
+        raise ValueError(f"not an owner token: {token!r}")
+    pid = int(match.group(1))
     if not psutil.pid_exists(pid):
         return False
     try:
@@ -269,14 +286,26 @@ class Seams:
     owner_alive: Callable[[str], bool] = _owner_alive
     lock_dir: Path = dataclasses.field(
         default_factory=lambda: (
-            Path(tempfile.gettempdir()) / "printstash-apple-container"
+            Path.home() / "Library" / "Caches" / "printstash-apple-container"
         )
     )
-    arch: str = dataclasses.field(
-        default_factory=lambda: (
-            "arm64" if host_platform.machine() in ("arm64", "aarch64") else "amd64"
-        )
-    )
+
+
+def _notice(message: str) -> None:
+    """Report a best-effort failure without raising, even under `-W error`."""
+    try:
+        warnings.warn(message, stacklevel=3)
+    except Warning:
+        sys.stderr.write(f"warning: {message}\n")
+
+
+def _open_lock(directory: Path, name: str) -> int:
+    """A lock file in a directory only this user can use; never follows a symlink."""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = directory.lstat()
+    if not directory.is_dir() or directory.is_symlink() or info.st_uid != os.getuid():
+        raise PermissionError(f"{directory} is not a directory owned by this user")
+    return os.open(directory / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -293,6 +322,15 @@ class ExecOk:
 Readiness = LogLine | ExecOk
 
 
+class ProbeReply(str, enum.Enum):
+    """What the published port answered."""
+
+    ANSWERED = "answered"
+    # Accepted, then closed with nothing: what a missing Local Network grant looks like.
+    SILENT = "silent"
+    WRONG = "wrong"
+
+
 class ProbeKind(str, enum.Enum):
     """The protocol the host speaks to the published port once the service is ready."""
 
@@ -307,7 +345,7 @@ class ServiceSpec:
     image: str
     container_port: int
     readiness: Readiness
-    probe: ProbeKind | None
+    probe: ProbeKind
     env: tuple[tuple[str, str], ...] = ()
     command: tuple[str, ...] = ()
 
@@ -400,10 +438,11 @@ def _message_wedge(error: CliTimeout) -> str:
     return (
         f"a `container` command hung ({error}). On macOS 27 this is "
         "apple/container#2275: com.apple.pfd stopped answering and every command "
-        "waits behind it. Check `launchctl print system/com.apple.pfd` (state, runs, "
-        "last exit code); a climbing `runs` count with exit code 3 confirms it, and "
-        "only a reboot clears it. Turning on Application Firewall stealth mode "
-        "beforehand avoids it."
+        "waits behind it. Check `launchctl print system/com.apple.pfd`: a climbing "
+        "`runs` count with exit code 3 confirms it. Turn on Application Firewall "
+        "stealth mode (`sudo /usr/libexec/ApplicationFirewall/socketfilterfw "
+        "--setstealthmode on`), then reboot; a reboot without stealth mode brings the "
+        "hang back with the next container."
     )
 
 
@@ -445,7 +484,6 @@ class ServiceHandle:
 class StartedService:
     name: str
     port: int
-    address: str
 
 
 class AppleRuntime:
@@ -458,6 +496,8 @@ class AppleRuntime:
         self._available = False
         self._reaped = False
         self._started_any = False
+        self._failed: dict[str, str] = {}
+        self.arch: str = "arm64"
 
     # --- availability -----------------------------------------------------
 
@@ -476,9 +516,20 @@ class AppleRuntime:
         version = self.seams.cli(
             [CONTAINER, "system", "version", "--format", "json"], SHORT_TIMEOUT_S
         )
-        entries = {
-            entry["appName"]: entry["version"] for entry in json.loads(version.stdout)
-        }
+        if version.returncode != 0:
+            raise RuntimeUnavailable(
+                f"container system version failed: {version.stderr.strip()}"
+            )
+        try:
+            host = json.loads(status.stdout)["host"]["architecture"]
+            entries = {
+                entry["appName"]: entry["version"]
+                for entry in json.loads(version.stdout)
+            }
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RuntimeUnavailable(
+                f"cannot read the container status or version: {exc!r}"
+            ) from exc
         client = entries.get("container")
         server = entries.get("container-apiserver")
         if client is None or server is None:
@@ -493,6 +544,10 @@ class AppleRuntime:
                     f"container {role} {text} is outside the supported range "
                     f">=1.5.0,<1.6 (client {client}, apiserver {server})."
                 )
+        # The host's architecture, not this interpreter's: a Python running under
+        # Rosetta would otherwise pull amd64 images onto an Apple-silicon Mac.
+        arch = str(host)
+        self.arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(arch, arch)
         self._available = True
 
     def available(self) -> bool:
@@ -507,32 +562,38 @@ class AppleRuntime:
     def ensure_image(self, image: str, arch: str) -> str:
         """Pull *image* once across processes and return the reference to run."""
         reference = registry_reference(image)
+        if self._image_present(reference):
+            return reference
+        digest = hashlib.sha256(reference.encode()).hexdigest()[:16]
+        lock = _open_lock(self.seams.lock_dir, f"pull-{digest}.lock")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if self._image_present(reference):
+                return reference
+            self._pull(reference, arch)
+        finally:
+            os.close(lock)
+        return reference
+
+    def _image_present(self, reference: str) -> bool:
         inspect = self.seams.cli(
             [CONTAINER, "image", "inspect", reference], SHORT_TIMEOUT_S
         )
-        if inspect.returncode == 0:
-            return reference
-        self.seams.lock_dir.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha256(reference.encode()).hexdigest()[:16]
-        with open(self.seams.lock_dir / f"pull-{digest}.lock", "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            if (
-                self.seams.cli(
-                    [CONTAINER, "image", "inspect", reference], SHORT_TIMEOUT_S
-                ).returncode
-                == 0
-            ):
-                return reference
-            argv = [
-                CONTAINER,
-                "image",
-                "pull",
-                "--platform",
-                f"linux/{arch}",
-                "--progress",
-                "none",
-                reference,
-            ]
+        return inspect.returncode == 0
+
+    def _pull(self, reference: str, arch: str) -> None:
+        argv = [
+            CONTAINER,
+            "image",
+            "pull",
+            "--platform",
+            f"linux/{arch}",
+            "--progress",
+            "none",
+            reference,
+        ]
+        attempts = self.containers.CONTAINER_START_ATTEMPTS
+        for attempt in range(attempts):
             try:
                 pulled = self.seams.cli(argv, PULL_TIMEOUT_S)
             except CliTimeout as exc:
@@ -540,40 +601,62 @@ class AppleRuntime:
                     f"pulling {reference} took longer than {PULL_TIMEOUT_S}s. Pull it "
                     f"by hand and re-run: `{' '.join(argv)}`"
                 ) from exc
-        if pulled.returncode != 0:
-            raise StartFailure(
-                f"pulling {reference} failed: {pulled.stderr.strip() or pulled.stdout.strip()}"
-            )
-        return reference
+            if pulled.returncode == 0:
+                return
+            failure = pulled.stderr.strip() or pulled.stdout.strip() or "no output"
+            if not self._retryable(failure) or attempt == attempts - 1:
+                raise StartFailure(f"pulling {reference} failed: {failure}")
+            self.seams.sleep(2**attempt)
 
     # --- start ------------------------------------------------------------
 
     def start(self, spec: ServiceSpec) -> StartedService:
+        if spec.key in self._failed:
+            raise StartFailure(
+                f"{spec.key} failed to start earlier in this session: "
+                f"{self._failed[spec.key]}"
+            )
         self.check_available()
         self._reap_once()
-        arch = self.seams.arch
-        reference = self.ensure_image(spec.image, arch)
+        try:
+            return self._start(spec)
+        except StartFailure as exc:
+            self._failed[spec.key] = str(exc)
+            raise
+
+    def _start(self, spec: ServiceSpec) -> StartedService:
+        reference = self.ensure_image(spec.image, self.arch)
         attempts = self.containers.CONTAINER_START_ATTEMPTS
         for attempt in range(attempts):
             name = f"{NAME_PREFIX}{spec.key}-{os.getpid()}-{secrets.token_hex(4)}"
             port = self.seams.free_port()
+            # Registered before `run`, so a run that creates the container and then
+            # hangs still leaves it to `shutdown_containers` and the session sweep.
             handle = ServiceHandle(self, name)
             self.containers._started.append(handle)
             self._started_any = True
-            failure = self._run(spec, reference, arch, name, port)
+            failure = self._run(spec, reference, name, port)
             if failure is None:
-                self._wait_ready(spec, name, port)
-                self._probe(spec, port)
-                return StartedService(name, port, self.container_address(name))
-            handle.stop()
-            retryable = self._retryable(failure)
-            if not retryable or attempt == attempts - 1:
+                try:
+                    self._wait_ready(spec, name, port)
+                    self._probe(spec, port)
+                except BaseException:
+                    self._discard(handle)
+                    raise
+                return StartedService(name, port)
+            self._discard(handle)
+            if not self._retryable(failure) or attempt == attempts - 1:
                 raise StartFailure(f"container run failed for {spec.key}: {failure}")
             self.seams.sleep(2**attempt)
         raise AssertionError("container start retry loop exhausted without an outcome")
 
+    def _discard(self, handle: ServiceHandle) -> None:
+        handle.stop()
+        if handle in self.containers._started:
+            self.containers._started.remove(handle)
+
     def _run(
-        self, spec: ServiceSpec, reference: str, arch: str, name: str, port: int
+        self, spec: ServiceSpec, reference: str, name: str, port: int
     ) -> str | None:
         argv = [
             CONTAINER,
@@ -582,7 +665,7 @@ class AppleRuntime:
             "--progress",
             "none",
             "--platform",
-            f"linux/{arch}",
+            f"linux/{self.arch}",
             "--name",
             name,
             "--label",
@@ -642,42 +725,54 @@ class AppleRuntime:
         return "\n".join((result.stdout + result.stderr).splitlines()[-20:])
 
     def _probe(self, spec: ServiceSpec, port: int) -> None:
-        """Speak the service's protocol once through the published port."""
-        if spec.probe is None:
-            return
-        resets = 0
+        """Speak the service's protocol once through the published port.
+
+        Only a connection that is accepted and then reset or closed empty on every
+        attempt points at Local Network. A refusal, a timeout or a reply in the wrong
+        protocol is the service's problem, and is reported as such.
+        """
+        silent = 0
         last: BaseException | None = None
         for attempt in range(PROBE_ATTEMPTS):
             try:
                 reply = self._probe_once(spec.probe, port)
             except ConnectionResetError as exc:
-                resets += 1
+                silent += 1
                 last = exc
             except (OSError, http.client.HTTPException) as exc:
                 last = exc
             else:
-                if reply:
+                if reply is ProbeReply.ANSWERED:
                     return
-                resets += 1
+                if reply is ProbeReply.WRONG:
+                    raise StartFailure(
+                        f"{spec.key} answered on its published port, but not in the "
+                        "protocol it should speak"
+                    )
+                silent += 1
                 last = None
             if attempt < PROBE_ATTEMPTS - 1:
                 self.seams.sleep(1)
-        if resets == PROBE_ATTEMPTS:
+        if silent == PROBE_ATTEMPTS:
             raise LocalNetworkDenied(_message_local_network())
         raise StartFailure(
             f"{spec.key} was ready but its published port did not answer: {last!r}"
         )
 
-    def _probe_once(self, kind: ProbeKind, port: int) -> bytes:
+    def _probe_once(self, kind: ProbeKind, port: int) -> ProbeReply:
+        if kind is ProbeKind.HTTP:
+            self.seams.http_status(f"http://{PUBLISH_HOST}:{port}/", 3)
+            return ProbeReply.ANSWERED
         if kind is ProbeKind.POSTGRES:
             # SSLRequest: any server that speaks the protocol answers N or S.
             reply = self.seams.tcp_reply(port, struct.pack("!II", 8, 80877103), 3)
-            return reply if reply[:1] in (b"N", b"S") else b""
-        if kind is ProbeKind.SSH:
+            expected = reply[:1] in (b"N", b"S")
+        else:
             reply = self.seams.tcp_reply(port, None, 3)
-            return reply if reply.startswith(b"SSH-") else b""
-        status = self.seams.http_status(f"http://{PUBLISH_HOST}:{port}/", 3)
-        return str(status).encode()
+            expected = reply.startswith(b"SSH-")
+        if not reply:
+            return ProbeReply.SILENT
+        return ProbeReply.ANSWERED if expected else ProbeReply.WRONG
 
     # --- addresses --------------------------------------------------------
 
@@ -685,8 +780,13 @@ class AppleRuntime:
         result = self.seams.cli([CONTAINER, "inspect", name], SHORT_TIMEOUT_S)
         if result.returncode != 0:
             raise StartFailure(f"cannot inspect {name}: {result.stderr.strip()}")
-        networks = json.loads(result.stdout)[0]["status"]["networks"]
-        return networks[0]["ipv4Address"].split("/")[0]
+        try:
+            networks = json.loads(result.stdout)[0]["status"]["networks"]
+            return networks[0]["ipv4Address"].split("/")[0]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise StartFailure(
+                f"{name} has no network address (it may have exited): {exc!r}"
+            ) from exc
 
     def check_container_address(self, address: str, port: int) -> None:
         """One request to the container's own address; Local Network can block it."""
@@ -710,12 +810,10 @@ class AppleRuntime:
                 [CONTAINER, "delete", "--force", name], SHORT_TIMEOUT_S
             )
         except CliTimeout as exc:
-            warnings.warn(f"could not remove {name}: {exc}", stacklevel=2)
+            _notice(f"could not remove {name}: {exc}")
             return
         if result.returncode != 0 and "not found" not in result.stderr.lower():
-            warnings.warn(
-                f"could not remove {name}: {result.stderr.strip()}", stacklevel=2
-            )
+            _notice(f"could not remove {name}: {result.stderr.strip()}")
 
     def _list_all(self) -> list[dict[str, Any]]:
         result = self.seams.cli(
@@ -730,9 +828,10 @@ class AppleRuntime:
         if self._reaped:
             return
         self._reaped = True
+        notices: list[str] = []
         try:
-            self.seams.lock_dir.mkdir(parents=True, exist_ok=True)
-            with open(self.seams.lock_dir / "reaper.lock", "w") as lock:
+            lock = _open_lock(self.seams.lock_dir, "reaper.lock")
+            try:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
@@ -746,15 +845,18 @@ class AppleRuntime:
                         alive = self.seams.owner_alive(owner)
                     except ValueError:
                         # A label this adapter did not write: not ours to remove.
-                        warnings.warn(
-                            f"{name} has an unreadable owner label {owner!r}",
-                            stacklevel=2,
+                        notices.append(
+                            f"{name} has an unreadable owner label {owner!r}"
                         )
                         continue
                     if not alive:
                         self.delete(name)
+            finally:
+                os.close(lock)
         except Exception as exc:  # the reaper is best effort by contract
-            warnings.warn(f"container reaper skipped: {exc!r}", stacklevel=2)
+            notices.append(f"container reaper skipped: {exc!r}")
+        for notice in notices:
+            _notice(notice)
 
     def sweep_own(self) -> None:
         """Remove what this process started and `shutdown_containers` missed."""
@@ -767,20 +869,31 @@ class AppleRuntime:
                 if labels.get(OWNER_LABEL) == token:
                     self.delete(entry["configuration"]["id"])
         except Exception as exc:  # teardown must not fail a finished run
-            warnings.warn(f"container sweep skipped: {exc!r}", stacklevel=2)
+            _notice(f"container sweep skipped: {exc!r}")
 
 
 def _exit(message: str) -> NoReturn:
     pytest.exit(message, returncode=1)
 
 
-def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]:
+Stop = Callable[[str], NoReturn]
+
+
+def missing_names(containers: ModuleType) -> list[str]:
+    """The names this adapter relies on that `tests/containers.py` no longer defines."""
+    return [name for name in (*PATCHED, *RELIED_ON) if not hasattr(containers, name)]
+
+
+def install(
+    containers: ModuleType, runtime: AppleRuntime, stop: Stop = _exit
+) -> Callable[[], None]:
     """Swap the start functions in *containers* for ones that use *runtime*.
 
-    Returns the function that puts the originals back. Raises `AdapterDriftError`
-    before changing anything when a name the adapter relies on is gone.
+    *stop* ends the session with a message; the plugin's version makes the message
+    reach the xdist controller. Returns the function that puts the originals back.
+    Raises `AdapterDriftError` before changing anything when a name is missing.
     """
-    missing = [name for name in (*PATCHED, *RELIED_ON) if not hasattr(containers, name)]
+    missing = missing_names(containers)
     if missing:
         raise AdapterDriftError(
             f"tests/containers.py no longer defines {missing}; update "
@@ -793,11 +906,11 @@ def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]
         try:
             return action()
         except CliTimeout as exc:
-            _exit(f"cannot start {resource}: {_message_wedge(exc)}")
+            stop(f"cannot start {resource}: {_message_wedge(exc)}")
         except RuntimeUnavailable as exc:
-            _exit(f"cannot start {resource}: {exc}")
+            stop(f"cannot start {resource}: {exc}")
         except LocalNetworkDenied as exc:
-            _exit(f"cannot start {resource}: {exc}")
+            stop(f"cannot start {resource}: {exc}")
 
     def docker_available() -> bool:
         return runtime.available()
@@ -826,16 +939,19 @@ def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]
         service = guarded(
             lambda: runtime.start(specs["seaweedfs"]), containers.S3_RESOURCE
         )
+        address = guarded(
+            lambda: runtime.container_address(service.name), containers.S3_RESOURCE
+        )
         guarded(
             lambda: runtime.check_container_address(
-                service.address, containers.SEAWEEDFS_S3_PORT
+                address, containers.SEAWEEDFS_S3_PORT
             ),
             containers.S3_RESOURCE,
         )
         # GC tests need the container's own address: a loopback backup is correctly
         # considered shared with a local Vault.
         containers._resolved["s3_private"] = (
-            f"http://{service.address}:{containers.SEAWEEDFS_S3_PORT}"
+            f"http://{address}:{containers.SEAWEEDFS_S3_PORT}"
         )
         return f"http://{PUBLISH_HOST}:{service.port}"
 
@@ -849,12 +965,20 @@ def install(containers: ModuleType, runtime: AppleRuntime) -> Callable[[], None]
         )
         last = "no response"
         for attempt in range(KEYSCAN_ATTEMPTS):
-            result = runtime.seams.cli(
-                ["ssh-keyscan", "-p", str(service.port), PUBLISH_HOST], 5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return PUBLISH_HOST, service.port, result.stdout
-            last = f"exit={result.returncode}, {result.stderr.strip() or 'empty host-key response'}"
+            try:
+                result = runtime.seams.cli(
+                    ["ssh-keyscan", "-T", "2", "-p", str(service.port), PUBLISH_HOST],
+                    5,
+                )
+            except (CliTimeout, RuntimeUnavailable) as exc:
+                last = str(exc)
+            else:
+                if result.returncode == 0 and result.stdout.strip():
+                    return PUBLISH_HOST, service.port, result.stdout
+                stderr = result.stderr.strip()
+                last = (
+                    f"exit={result.returncode}, {stderr or 'empty host-key response'}"
+                )
             if attempt < KEYSCAN_ATTEMPTS - 1:
                 runtime.seams.sleep(0.25)
         raise RuntimeError(
@@ -892,28 +1016,37 @@ def _names_nextcloud(item: pytest.Item) -> bool:
     return any(part in NEXTCLOUD_IDS for part in ids) or "nextcloud" in name.split("_")
 
 
+def _selects_a_resource(session: pytest.Session) -> bool:
+    return any(
+        item.get_closest_marker(marker) is not None
+        for item in session.items
+        for marker in RESOURCE_MARKERS
+    )
+
+
+def _quiet(session: pytest.Session) -> bool:
+    """A run that collects only, already failed, or is already stopping."""
+    return bool(
+        session.config.option.collectonly or session.testsfailed or session.shouldstop
+    )
+
+
 class AppleContainerPlugin:
     """The collection and teardown hooks that go with the runtime."""
 
     def __init__(
-        self,
-        config: pytest.Config,
-        runtime: AppleRuntime,
-        tests_dir: Path,
-        docker_only_files: Sequence[str] = DOCKER_ONLY_FILES,
-        nextcloud_files: Sequence[str] = NEXTCLOUD_FILES,
+        self, config: pytest.Config, runtime: AppleRuntime, tests_dir: Path
     ) -> None:
         self.config = config
         self.runtime = runtime
-        self.tests_dir = tests_dir
-        self.docker_only_files = tuple(docker_only_files)
-        self.nextcloud_files = tuple(nextcloud_files)
+        self.tests_dir = tests_dir.resolve()
+        self.session: pytest.Session | None = None
         self.deselected: set[str] = set()
         self.opt_in = bool(config.getoption(DESELECT_OPTION))
         missing = [
             name
-            for name in (*self.docker_only_files, *self.nextcloud_files)
-            if not (tests_dir / name).is_file()
+            for name in (*DOCKER_ONLY_FILES, *NEXTCLOUD_FILES)
+            if not (self.tests_dir / name).is_file()
         ]
         if missing:
             raise pytest.UsageError(
@@ -921,18 +1054,27 @@ class AppleContainerPlugin:
                 "Update DOCKER_ONLY_FILES or NEXTCLOUD_FILES."
             )
 
+    def stop(self, message: str) -> NoReturn:
+        """End the session; under xdist only `shouldstop` reaches the controller."""
+        if self.session is not None:
+            self.session.shouldstop = message
+        _exit(message)
+
     def _reason(self, item: pytest.Item) -> str | None:
         for marker in DOCKER_ONLY_MARKERS:
             if item.get_closest_marker(marker) is not None:
                 return f"marked {marker}"
-        path = Path(str(item.path))
-        for name in self.docker_only_files:
+        path = Path(str(item.path)).resolve()
+        for name in DOCKER_ONLY_FILES:
             if path == self.tests_dir / name:
                 return f"in {name}"
-        for name in self.nextcloud_files:
+        for name in NEXTCLOUD_FILES:
             if path == self.tests_dir / name and _names_nextcloud(item):
                 return "needs Nextcloud"
         return None
+
+    def pytest_sessionstart(self, session: pytest.Session) -> None:
+        self.session = session
 
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(
@@ -957,12 +1099,7 @@ class AppleContainerPlugin:
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         # After the suite's own resource check, so a stopped apiserver is reported
         # before the list of tests that would not have run on it anyway.
-        if (
-            self.opt_in
-            or session.config.option.collectonly
-            or session.testsfailed
-            or session.shouldstop
-        ):
+        if self.opt_in or _quiet(session):
             return
         found = sorted(
             f"{item.nodeid} ({reason})"
@@ -971,14 +1108,12 @@ class AppleContainerPlugin:
         )
         if not found:
             return
-        message = (
+        self.stop(
             "these tests need a Docker Engine API and cannot run on Apple container:\n  "
             + "\n  ".join(found)
             + f"\nRe-run with {DESELECT_OPTION} to leave them out and see them "
             "named in the summary, or run them on a machine with Docker."
         )
-        session.shouldstop = message
-        _exit(message)
 
     @pytest.hookimpl(optionalhook=True)
     def pytest_testnodedown(self, node: Any, error: object) -> None:
@@ -995,6 +1130,29 @@ class AppleContainerPlugin:
     @pytest.hookimpl(trylast=True)
     def pytest_sessionfinish(self, session: pytest.Session, exitstatus: object) -> None:
         self.runtime.sweep_own()
+
+
+class AdapterDriftPlugin:
+    """Stands in when `tests/containers.py` has drifted: nothing is patched.
+
+    Runs that select no resource-marked test are unaffected. One that does stops at
+    collection naming what is missing, before the suite's own Docker check would
+    report a missing daemon instead.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        self.message = (
+            f"tests/containers.py no longer defines {missing}, which "
+            "tests/apple_container.py relies on, so the Apple container adapter is off. "
+            "Update the adapter, or run with -p no:tests.apple_container to use Docker."
+        )
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        if _quiet(session) or not _selects_a_resource(session):
+            return
+        session.shouldstop = self.message
+        _exit(self.message)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -1023,15 +1181,23 @@ def activate(
     containers: ModuleType,
     platform_name: str,
     *,
-    runtime: AppleRuntime | None = None,
+    seams: Seams | None = None,
     tests_dir: Path,
-) -> AppleContainerPlugin | None:
+) -> AppleContainerPlugin | AdapterDriftPlugin | None:
     """Install the adapter on darwin; do nothing anywhere else."""
     if platform_name != "darwin":
         return None
-    runtime = runtime or AppleRuntime(containers)
-    undo = install(containers, runtime)
+    missing = missing_names(containers)
+    if missing:
+        drift = AdapterDriftPlugin(missing)
+        config.pluginmanager.register(drift, "apple-container-drift")
+        config.add_cleanup(lambda: config.pluginmanager.unregister(drift))
+        return drift
+    # Built only now: the runtime reads the constants the drift check just confirmed.
+    runtime = AppleRuntime(containers, seams)
+    # Built first: it validates the file lists, and nothing is patched if that fails.
     plugin = AppleContainerPlugin(config, runtime, tests_dir)
+    undo = install(containers, runtime, plugin.stop)
     config.pluginmanager.register(plugin, "apple-container-hooks")
 
     def cleanup() -> None:

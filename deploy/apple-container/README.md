@@ -14,7 +14,10 @@ same ones Docker runs.
 ## Setup (once)
 
 1. **Install `container` 1.5.x** (`>=1.5.0,<1.6`; the adapter checks both the client
-   and the apiserver and stops the run otherwise):
+   and the apiserver and stops the run otherwise). On a Mac without it, install
+   `container-1.5.0-installer-signed.pkg` from
+   [the 1.5.0 release](https://github.com/apple/container/releases/tag/1.5.0). To
+   upgrade an older install:
 
    ```bash
    container system stop                       # if an older one is running
@@ -22,9 +25,8 @@ same ones Docker runs.
    ```
 
 2. **Start the apiserver with a bound.** On macOS 27 a hung `com.apple.pfd` makes
-   every `container` command wait forever (apple/container#2275, survives reboots
-   until pf is healthy again). Application Firewall stealth mode avoids the
-   trigger:
+   every `container` command wait forever (apple/container#2275). Application
+   Firewall stealth mode avoids the trigger:
 
    ```bash
    launchctl print system/com.apple.pfd | grep -E 'state|runs|last exit'
@@ -32,7 +34,9 @@ same ones Docker runs.
    /usr/bin/timeout 600 container system start --enable-kernel-install
    ```
 
-   If `runs` climbs with `last exit code = 3`, that is the wedge; a reboot clears it.
+   If `runs` climbs with `last exit code = 3`, that is the wedge. Turn stealth mode on,
+   then reboot. A reboot without stealth mode brings the hang back with the next
+   container.
 
 3. **Install the recommended kernel.** An in-place upgrade keeps the 0.10 kernel:
 
@@ -73,8 +77,10 @@ Measured on an M5 Max, macOS 27.2, `container` 1.5.0:
 - **Nextcloud is not run.** Its pin is an amd64-only manifest, so it would run under
   Rosetta, where the first requests of each web-server worker outlast PHP's 30 s limit
   and come back as a `200` error page. Rather than run it unreliably, the tests that
-  need it are Docker-only. A test that reaches it without being named fails with a
-  message saying so.
+  need it are Docker-only. They are found by file and name: a test in one of the
+  files listed in `NEXTCLOUD_FILES` whose name or parameter id contains an entry of
+  `NEXTCLOUD_IDS`. A test that reaches Nextcloud without matching fails with a message
+  saying how to classify it.
 - **Many tests fail on this Mac with or without the adapter**, because of macOS, not
   the runtime: the native mesh and inference workers exit non-zero (`worker_failed`),
   the local filesystem probe reports no verified delete (so storage runs in the
@@ -92,17 +98,24 @@ Measured on an M5 Max, macOS 27.2, `container` 1.5.0:
   followed by one protocol probe through the published port.
 - `lscr.io/linuxserver/...@sha256:<digest>` is pulled from `ghcr.io` under the same
   digest. 1.5.0 refuses the `lscr.io` credential exchange.
-- Every container is labelled `printstash.test.owner=<pid>-<start time>`. A reaper
-  removes `printstash-test-*` containers whose owner is gone, the way Ryuk does for
-  Docker. After a hard kill, the next run cleans up.
-- Every `container` command has a timeout; a hang stops the run naming #2275.
+- Every container is labelled `printstash.test.owner=<pid>-<start time>`, and a
+  session removes its own containers when it ends. After a hard kill they keep
+  running until the next run that starts a service: its reaper removes
+  `printstash-test-*` containers whose owner is gone. There is no Ryuk; remove them
+  sooner by hand (see below).
+- Every `container` command has a timeout. A hang stops the run naming #2275, except
+  an image pull that outlasts its 30 minutes: that fails naming the command to pull
+  the image by hand.
 
 ## Running the suite
 
 ```bash
 cd backend
-uv run pytest -m "(postgres or s3 or remote_storage) and not coverage_gate and not scale" tests
+uv run pytest -m "(postgres or s3 or remote_storage) and not coverage_gate and not scale" \
+  tests --apple-container-deselect-docker-only
 ```
+
+Without the flag the run stops at collection and names the tests that need Docker.
 
 `-n auto` is 18 workers on an M5 Max, and each can start its own service VMs of
 4 vCPUs and 1 GiB. Cap them for the resource lanes:
@@ -126,7 +139,8 @@ Docker:
 ## If something goes wrong
 
 - `container system status` exits 1: start it (step 2).
-- A message naming `apple/container#2275`: check `launchctl print system/com.apple.pfd`.
+- A message naming `apple/container#2275`: check `launchctl print system/com.apple.pfd`,
+  turn stealth mode on, then reboot (step 2).
 - A message naming Local Network: grant it (step 4), then re-run.
 - Leftovers: `container list --all` shows `printstash-test-*`; they are removed by
   the next run, or by hand with `container delete --force <name>`.
