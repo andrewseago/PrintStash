@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Library titles and controls adapt to the available pane width. Cards use the
+  full grid width, collection tags and description actions share a compact row,
+  and description editing stays visible and usable on phones.
+
+- Library filters keep their position while facet counts load, so a response
+  arriving during a click does not lose the selected filter.
+
+- Uploads wait for newly created tags to be saved, so a quick submission keeps
+  every selected tag. Cancelling a draft ignores late tag acknowledgements.
+
+- Restoring large unfiltered collection trees reuses subtree counts instead of
+  repeating the same lookup for every descendant.
+
+- Model metadata stays current when derivative updates arrive during an in-flight
+  detail read, including revision comparison fields. Confirmed edit receipts
+  with a different derivative snapshot trigger a fresh authorized read.
+
+- Preparing-preview activity waits until the Library is ready before reading
+  the background queue. Opening Notifications can still request activity early.
+
+- Interrupted uploads remain in Notifications after reloading the page, so you
+  can select the same file and resume the existing upload session.
+
+- Mesh previews and geometry processing continue to work when a busy server has
+  more than 1,024 files open. Compute connections also wait for replies and detect
+  disconnected peers without the same descriptor limit. Warm workers preserve
+  high-numbered resource permits and close every unrelated descriptor before
+  processing a model.
+
 - An idle server on SQLite no longer uses more CPU the longer it runs. Each
   background-work lane keeps checking for queued work on a short interval, and on
   SQLite every check read the engine's entire workflow history, which the
