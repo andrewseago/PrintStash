@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy.exc import ArgumentError
 
+from app.core import host_cpus
 from app.core.config import (
     DATA_ROOT_LAYOUT,
     ConfigResolver,
@@ -72,6 +73,34 @@ class TestSettings:
         monkeypatch.setenv("VAULT_SLOW_REQUEST_MS", "250")
 
         assert FrozenSettings(_env_file=None).slow_request_ms == 250
+
+    @pytest.mark.parametrize(
+        ("cpus", "jobs"),
+        [pytest.param(4, 2, id="four-cpus"), pytest.param(12, 4, id="twelve-cpus")],
+    )
+    def test_render_jobs_default_follows_usable_cpus(
+        self, monkeypatch: pytest.MonkeyPatch, cpus: int, jobs: int
+    ) -> None:
+        monkeypatch.delenv("VAULT_MAX_RENDER_JOBS", raising=False)
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: cpus)
+
+        assert FrozenSettings(_env_file=None).max_render_jobs == jobs
+
+    def test_an_empty_render_jobs_override_uses_the_cpu_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VAULT_MAX_RENDER_JOBS", "")
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 4)
+
+        assert FrozenSettings(_env_file=None).max_render_jobs == 2
+
+    def test_an_explicit_render_jobs_value_wins(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VAULT_MAX_RENDER_JOBS", "1")
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 12)
+
+        assert FrozenSettings(_env_file=None).max_render_jobs == 1
 
     @pytest.mark.parametrize(
         ("field", "value"),
