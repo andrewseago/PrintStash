@@ -72,13 +72,19 @@ def _states() -> dict[str, JobState]:
         )
 
 
-def test_running_interactive_job_prepares_bounded_successors(tmp_path) -> None:
+def test_running_interactive_job_prepares_bounded_successors(
+    tmp_path, dbos_databases
+) -> None:
     catalog = contract_catalog()
     catalog.lanes[SERIAL] = replace(catalog.lanes[SERIAL], queue_order=LaneOrder.FIFO)
     catalog.definitions[DISCOVERED] = replace(
         catalog.definition(DISCOVERED), lane=SERIAL, source=_PrioritySource()
     )
-    with shared_app_db(), harness_for("dbos", tmp_path, catalog=catalog) as harness:
+    app_url, system_db = dbos_databases
+    with (
+        shared_app_db(app_url),
+        harness_for("dbos", tmp_path, catalog=catalog, system_db=system_db) as harness,
+    ):
         gate = threading.Event()
         RECORD.discover.update(
             {
