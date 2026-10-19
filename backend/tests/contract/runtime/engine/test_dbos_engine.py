@@ -30,6 +30,8 @@ from app.modules.work.contracts import (
     EngineStatus,
     ExecutionKind,
     JobSubmission,
+    LaneOrder,
+    PassSubmission,
     SubmitOutcome,
 )
 from app.runtime.engine.dbos_engine import TICK_WORKFLOW, system_database_url
@@ -255,6 +257,111 @@ class TestLaneBoost:
         engine.settle()
 
         assert engine.state(job_id) == JobState.COMPLETED
+
+
+@pytest.fixture
+def fifo_dispatch(engine, request):
+    """One accepted-candidate dispatch on a FIFO lane, with no consumer yet."""
+    engine.catalog.lanes[FAST] = replace(
+        engine.catalog.lanes[FAST], queue_order=LaneOrder.FIFO
+    )
+    if request.param == "pass":
+        return PassSubmission(
+            execution_id="fifo-discovery-pass",
+            source=PLAIN,
+            priority=WorkPriority.INTERACTIVE,
+        )
+    job_id = engine.job(PLAIN, "fifo/interactive")
+    with get_session_factory().scoped_session() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        return _submission(job, expedite=False)
+
+
+class TestInteractiveFifoDispatch:
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_interactive_fifo_dispatch_boosts_its_queue(self, engine, fifo_dispatch):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+
+        outcome = engine.engine.submit(fifo_dispatch)
+
+        assert outcome is SubmitOutcome.ACCEPTED
+        assert engine.engine.boosted_lanes() == frozenset({fifo_dispatch.lane})
+        assert _interval(engine, fifo_dispatch.lane) == 0.02
+
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    @pytest.mark.parametrize(
+        ("priority", "delay", "order"),
+        [
+            pytest.param(WorkPriority.BACKFILL, None, LaneOrder.FIFO, id="backfill"),
+            pytest.param(WorkPriority.INTERACTIVE, 60.0, LaneOrder.FIFO, id="delayed"),
+            pytest.param(
+                WorkPriority.INTERACTIVE, None, LaneOrder.PRIORITY, id="non-fifo"
+            ),
+        ],
+    )
+    def test_ineligible_fifo_dispatch_does_not_boost(
+        self, engine, fifo_dispatch, priority, delay, order
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        engine.catalog.lanes[FAST] = replace(
+            engine.catalog.lanes[FAST], queue_order=order
+        )
+        candidate = replace(fifo_dispatch, priority=priority, delay_seconds=delay)
+
+        outcome = engine.engine.submit(candidate)
+
+        assert outcome is SubmitOutcome.ACCEPTED
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize(
+        ("fifo_dispatch", "suffix", "expected"),
+        [
+            ("job", "", SubmitOutcome.EXISTING),
+            ("pass", "", SubmitOutcome.EXISTING),
+            ("job", "-other", SubmitOutcome.DEDUPLICATED),
+        ],
+        indirect=["fifo_dispatch"],
+        ids=["job-id", "pass-id", "job-subject"],
+    )
+    def test_duplicate_fifo_dispatch_does_not_renew_boost(
+        self, engine, fifo_dispatch, suffix, expected
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 0.2
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        engine.wait_for(lambda: not engine.engine.boosted_lanes())
+        candidate = replace(
+            fifo_dispatch, execution_id=f"{fifo_dispatch.execution_id}{suffix}"
+        )
+
+        assert engine.engine.submit(candidate) is expected
+
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_fifo_dispatch_boost_relaxes_after_activity(self, engine, fifo_dispatch):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 0.2
+        engine.engine.submit(fifo_dispatch)
+        assert _interval(engine, fifo_dispatch.lane) == 0.02
+
+        engine.wait_for(lambda: not engine.engine.boosted_lanes())
+
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("fifo_dispatch", ["job"], indirect=True)
+    def test_boosted_fifo_job_runs_to_completion(self, engine, fifo_dispatch):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        engine.relaunch(app_version=VERSION, listen_lanes=None)
+
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        engine.settle()
+
+        assert engine.state(fifo_dispatch.job_id) is JobState.COMPLETED
+        assert RECORD.firsts() == ["fifo/interactive"]
 
 
 @contextmanager

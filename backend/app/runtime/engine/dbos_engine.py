@@ -462,7 +462,8 @@ class DbosJobEngine(JobEngine):
         The engine only finds queued work by polling, so a Job someone waits on
         sits half a polling interval on average. Polling every lane that often
         would be paid for all day by an idle server; boosting the one lane a
-        request just dispatched to is paid for only while a batch arrives.
+        request or interactive derivative batch just dispatched to is paid for
+        only while that batch arrives.
         """
         window = settings.jobs_queue_boost_seconds
         lane = self.catalog.lanes[name]
@@ -608,7 +609,21 @@ class DbosJobEngine(JobEngine):
         if holder != submission.execution_id:
             # Only a dedupe key held by another workflow names a different one.
             return SubmitOutcome.DEDUPLICATED
-        if isinstance(submission, JobSubmission) and submission.expedite:
+        expedite = isinstance(submission, JobSubmission) and submission.expedite
+        if (
+            not expedite
+            and submission.priority is WorkPriority.INTERACTIVE
+            and not submission.delay_seconds
+        ):
+            target = (
+                self.catalog.lane_for(submission.source)
+                if isinstance(submission, PassSubmission)
+                else self.catalog.lanes[submission.lane]
+            )
+            # FIFO derivative work is still interactive. Boost its dispatch
+            # path while a batch arrives, including the pass that discovers it.
+            expedite = target.queue_order is LaneOrder.FIFO
+        if expedite:
             self._boost(submission.lane)
         return SubmitOutcome.ACCEPTED
 
