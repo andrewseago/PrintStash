@@ -1,0 +1,154 @@
+[
+  {
+    "configuration" : {
+      "capAdd" : [
+
+      ],
+      "capDrop" : [
+
+      ],
+      "creationDate" : "2026-01-01T00:00:00Z",
+      "dns" : {
+        "nameservers" : [
+
+        ],
+        "options" : [
+
+        ],
+        "searchDomains" : [
+
+        ]
+      },
+      "id" : "printstash",
+      "image" : {
+        "descriptor" : {
+          "annotations" : {
+            "com.apple.containerization.image.name" : "printstash:local",
+            "io.containerd.image.name" : "docker.io/library/printstash:local",
+            "org.opencontainers.image.created" : "2026-01-01T00:00:00Z",
+            "org.opencontainers.image.ref.name" : "local"
+          },
+          "digest" : "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "mediaType" : "application/vnd.oci.image.index.v1+json",
+          "size" : 375
+        },
+        "reference" : "printstash:local"
+      },
+      "initProcess" : {
+        "arguments" : [
+          "/usr/bin/tini",
+          "--",
+          "/app/unified-run.sh"
+        ],
+        "environment" : [
+          "PYTHONUNBUFFERED=1",
+          "UV_NO_SYNC=1",
+          "PUID=10001",
+          "PGID=10001",
+          "PYTHON_SHA256=c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73",
+          "UV_COMPILE_BYTECODE=1",
+          "PRINTSTASH_IMAGE_VARIANT=full",
+          "UV_CACHE_DIR=/tmp/printstash-uv-cache",
+          "PYTHONDONTWRITEBYTECODE=1",
+          "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "PYTHON_VERSION=3.14.8",
+          "VAULT_SETUP_MODE=trusted_network",
+          "VAULT_DATA_ROOT=/data",
+          "NGINX_CLIENT_MAX_BODY_SIZE=528m"
+        ],
+        "executable" : "/app/docker-entrypoint.sh",
+        "rlimits" : [
+
+        ],
+        "supplementalGroups" : [
+
+        ],
+        "terminal" : false,
+        "user" : {
+          "id" : {
+            "gid" : 0,
+            "uid" : 0
+          }
+        },
+        "workingDirectory" : "/app"
+      },
+      "labels" : {
+        "printstash.image" : "printstash:local",
+        "printstash.memory" : "4g",
+        "printstash.port" : "3999"
+      },
+      "mounts" : [
+        {
+          "destination" : "/data",
+          "options" : [
+
+          ],
+          "source" : "/Users/example/Library/Application Support/com.apple.container/volumes/printstash/volume.img",
+          "type" : {
+            "volume" : {
+              "cache" : {
+                "on" : {
+
+                }
+              },
+              "format" : "ext4",
+              "name" : "printstash",
+              "sync" : {
+                "fsync" : {
+
+                }
+              }
+            }
+          }
+        }
+      ],
+      "networks" : [
+        {
+          "network" : "default",
+          "options" : {
+            "hostname" : "printstash",
+            "mtu" : 1280
+          }
+        }
+      ],
+      "platform" : {
+        "architecture" : "arm64",
+        "os" : "linux"
+      },
+      "publishedPorts" : [
+        {
+          "containerPort" : 3000,
+          "count" : 1,
+          "hostAddress" : "127.0.0.1",
+          "hostPort" : 3999,
+          "proto" : "tcp"
+        }
+      ],
+      "publishedSockets" : [
+
+      ],
+      "readOnly" : false,
+      "resources" : {
+        "cpuOverhead" : 1,
+        "cpus" : 4,
+        "memoryInBytes" : 4294967296
+      },
+      "rosetta" : false,
+      "runtimeHandler" : "container-runtime-linux",
+      "ssh" : false,
+      "sysctls" : {
+
+      },
+      "useInit" : false,
+      "virtualization" : false
+    },
+    "id" : "printstash",
+    "status" : {
+      "networks" : [
+
+      ],
+      "startedDate" : "2026-01-01T00:00:00Z",
+      "state" : "stopped"
+    }
+  }
+]
