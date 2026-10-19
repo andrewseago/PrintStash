@@ -775,6 +775,11 @@ See [the upgrade guide](UPGRADE.md#unreleased-dbos-30).
 
 ### Fixed
 
+- Expired printers now appear in garbage-collection previews and can be purged
+  after backup verification, approval and quarantine. Printer configuration is
+  removed without foreign-key failures; print and notification history survives.
+
+
 - Refused storage writes no longer strand thumbnail reservations. Hourly cleanup
   recovers stale failed publications even when trash expiry is disabled or a GC
   preview awaits approval, so thumbnails can be generated again after enrollment.
