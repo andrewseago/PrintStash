@@ -1,0 +1,17 @@
+{
+ "argv": [
+  "container",
+  "run",
+  "--detach",
+  "--progress",
+  "none",
+  "--name",
+  "ps-fx-run",
+  "-p",
+  "127.0.0.1:18082:80",
+  "nginx:alpine"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: container with id ps-fx-run already exists\n"
+}

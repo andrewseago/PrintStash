@@ -1,0 +1,11 @@
+{
+ "argv": [
+  "container",
+  "exec",
+  "ps-fx-run",
+  "no-such-binary"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: failed to find target executable no-such-binary\nError: failed to start process 00000000-0000-0000-0000-000000000000 in container ps-fx-run (cause: \"internalError: \"failed to start process (cause: \"internalError: \"startProcess: failed to start process: internalError: \"vmexec error: internalError: \"failed to find target executable no-such-binary\"\"\"\")\"\")\n"
+}

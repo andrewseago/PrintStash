@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "container",
+  "list",
+  "--all",
+  "--format",
+  "json"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: internalError: \"failed to list containers\" (cause: \"interrupted: \"XPC connection error: Connection invalid\"\")\nEnsure container system service has been started with `container system start`.\n"
+}

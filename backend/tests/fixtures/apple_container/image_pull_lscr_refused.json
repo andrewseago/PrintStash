@@ -1,0 +1,15 @@
+{
+ "argv": [
+  "container",
+  "image",
+  "pull",
+  "--platform",
+  "linux/arm64",
+  "--progress",
+  "none",
+  "lscr.io/linuxserver/openssh-server@sha256:2a48f9ce01f61c1d7b376b7be99bd12801a3ecd9f339a4c7e7698d529e8d0b47"
+ ],
+ "returncode": 1,
+ "stdout": "",
+ "stderr": "Error: refusing insecure credential exchange: authorization server ghcr.io is not in the same registrable domain as registry lscr.io\n"
+}

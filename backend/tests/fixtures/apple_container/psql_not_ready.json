@@ -1,0 +1,21 @@
+{
+ "argv": [
+  "container",
+  "exec",
+  "-e",
+  "PGPASSWORD=printstash",
+  "ps-fx-pg",
+  "psql",
+  "--username",
+  "printstash",
+  "--dbname",
+  "printstash",
+  "--host",
+  "127.0.0.1",
+  "-c",
+  "select version();"
+ ],
+ "returncode": 2,
+ "stdout": "",
+ "stderr": "psql: error: connection to server at \"127.0.0.1\", port 5432 failed: Connection refused\n\tIs the server running on that host and accepting TCP/IP connections?\n"
+}

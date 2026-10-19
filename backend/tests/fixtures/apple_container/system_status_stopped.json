@@ -1,0 +1,12 @@
+{
+ "argv": [
+  "container",
+  "system",
+  "status",
+  "--format",
+  "json"
+ ],
+ "returncode": 1,
+ "stdout": "{\"status\":\"unregistered\"}\n",
+ "stderr": ""
+}
