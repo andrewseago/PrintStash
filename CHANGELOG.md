@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Model filters panel lists G-code below a divider, after the source formats
+  it is sliced from, and writes formats as STL, 3MF, OBJ, STEP, DXF and G-code.
+  Active-filter chips use the panel's names and values ("File type: G-code",
+  "Revision: Needs test"), and material or printer names show as written.
+
 - An upload into a library folder on a network or automounted share no longer
   fails with `storage_root_changed` when the share briefly reports a different
   identity while it reconnects. PrintStash re-checks the folder and retries the
