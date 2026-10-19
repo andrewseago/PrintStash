@@ -394,12 +394,14 @@ def _empty(engine) -> None:
 
 
 @contextmanager
-def harness_for(kind: str, tmp_path: Path) -> Iterator[Harness]:
+def harness_for(
+    kind: str, tmp_path: Path, *, catalog: WorkCatalog | None = None
+) -> Iterator[Harness]:
     RECORD.steps.clear()
     RECORD.behaviour.clear()
     RECORD.discover.clear()
     RECORD.running = RECORD.peak = 0
-    catalog = contract_catalog()
+    catalog = catalog or contract_catalog()
     built: Harness = (
         InlineHarness(catalog)
         if kind == "inline"
