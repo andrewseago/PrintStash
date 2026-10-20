@@ -196,10 +196,10 @@ services:
       VAULT_PROCESS_ROLE: ${VAULT_PROCESS_ROLE:-all}
       VAULT_API_RUNS_JOBS: ${VAULT_API_RUNS_JOBS:-true}
       VAULT_SHARED_STORAGE: ${VAULT_SHARED_STORAGE:-false}
-      # Per process: mesh renders at once (unset: one per two usable CPUs, 1 to
-      # 4; memory admission still runs a large model alone), and uploads
-      # committed at once. Settings → Background work overrides every lane's
-      # concurrency at runtime for all processes.
+      # Native mesh slots across processes sharing the local data root (unset:
+      # one per two usable CPUs, 1 to 4; fractional quotas round up). Memory
+      # admission can hold back large models. Settings → Background work
+      # overrides lane concurrency at runtime for all processes.
       VAULT_MAX_RENDER_JOBS: ${VAULT_MAX_RENDER_JOBS:-}
       # Portable compute. The image already carries the GPU runtime; it is used
       # only once a device is handed to this service (see "GPU" below) and

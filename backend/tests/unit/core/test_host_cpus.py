@@ -38,6 +38,12 @@ def _cpu_max(group: Path, line: str) -> None:
     (group / "cpu.max").write_text(line + "\n")
 
 
+def _v1_quota(group: Path, quota: int, period: int = 100000) -> None:
+    group.mkdir(parents=True, exist_ok=True)
+    (group / "cpu.cfs_quota_us").write_text(f"{quota}\n")
+    (group / "cpu.cfs_period_us").write_text(f"{period}\n")
+
+
 class TestCgroupCpuLimit:
     def test_reads_the_container_quota(self, cgroup: Path, tmp_path: Path) -> None:
         _cpu_max(cgroup, "400000 100000")
@@ -47,7 +53,9 @@ class TestCgroupCpuLimit:
     def test_an_unlimited_quota_is_no_limit(self, cgroup: Path, tmp_path: Path) -> None:
         _cpu_max(cgroup, "max 100000")
 
-        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) is None
+        assert (
+            cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) is None
+        )
 
     @pytest.mark.parametrize(
         ("line", "cpus"),
@@ -61,7 +69,9 @@ class TestCgroupCpuLimit:
     ) -> None:
         _cpu_max(cgroup, line)
 
-        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) == cpus
+        assert (
+            cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) == cpus
+        )
 
     def test_a_service_group_quota_below_the_mount_applies(
         self, cgroup: Path, tmp_path: Path
@@ -99,7 +109,9 @@ class TestCgroupCpuLimit:
         (cgroup / "cpu" / "cpu.cfs_quota_us").write_text("-1\n")
         (cgroup / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
 
-        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) is None
+        assert (
+            cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP)) is None
+        )
 
     def test_no_cgroup_files_is_no_limit(self, cgroup: Path, tmp_path: Path) -> None:
         assert cgroup_cpu_limit(cgroup, tmp_path / "absent") is None
@@ -109,7 +121,89 @@ class TestCgroupCpuLimit:
     ) -> None:
         _cpu_max(tmp_path / "outside", "100000 100000")
 
-        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, "0::/../outside\n")) is None
+        assert (
+            cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, "0::/../outside\n")) is None
+        )
+
+    @pytest.mark.parametrize("controllers", ["cpu", "cpu,cpuacct", "cpuacct,cpu"])
+    def test_reads_the_v1_process_cpu_group(
+        self, cgroup: Path, tmp_path: Path, controllers: str
+    ) -> None:
+        mount = cgroup / controllers
+        _v1_quota(mount, -1)
+        _v1_quota(mount / "system.slice" / "printstash.service", 200000)
+        membership = f"2:{controllers}:/system.slice/printstash.service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) == 2
+
+    def test_a_v1_parent_quota_applies(self, cgroup: Path, tmp_path: Path) -> None:
+        mount = cgroup / "cpu"
+        _v1_quota(mount / "system.slice", 300000)
+        _v1_quota(mount / "system.slice" / "printstash.service", -1)
+        membership = "2:cpu:/system.slice/printstash.service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) == 3
+
+    def test_the_tightest_v1_quota_on_the_path_wins(
+        self, cgroup: Path, tmp_path: Path
+    ) -> None:
+        mount = cgroup / "cpu"
+        _v1_quota(mount, 600000)
+        _v1_quota(mount / "system.slice", 200000)
+        _v1_quota(mount / "system.slice" / "printstash.service", 400000)
+        membership = "2:cpu:/system.slice/printstash.service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) == 2
+
+    def test_reads_a_namespace_root_v1_quota(
+        self, cgroup: Path, tmp_path: Path
+    ) -> None:
+        _v1_quota(cgroup / "cpu", 300000)
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, "2:cpu:/\n")) == 3
+
+    def test_ignores_other_v1_controller_memberships(
+        self, cgroup: Path, tmp_path: Path
+    ) -> None:
+        mount = cgroup / "cpu"
+        _v1_quota(mount / "accounting", 100000)
+        _v1_quota(mount / "affinity", 100000)
+        _v1_quota(mount / "service", 600000)
+        _v1_quota(cgroup / "cpuacct" / "accounting", 100000)
+        membership = "2:cpuacct:/accounting\n3:cpuset:/affinity\n4:cpu:/service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) == 6
+
+    def test_an_unlimited_v1_path_is_no_limit(
+        self, cgroup: Path, tmp_path: Path
+    ) -> None:
+        mount = cgroup / "cpu"
+        _v1_quota(mount, -1)
+        _v1_quota(mount / "system.slice", -1)
+        _v1_quota(mount / "system.slice" / "printstash.service", -1)
+        membership = "2:cpu:/system.slice/printstash.service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) is None
+
+    @pytest.mark.parametrize("membership", ["/../outside", "outside"])
+    def test_ignores_an_invalid_v1_membership_path(
+        self, cgroup: Path, tmp_path: Path, membership: str
+    ) -> None:
+        _v1_quota(cgroup / "outside", 100000)
+        _v1_quota(cgroup / "cpu" / "outside", 100000)
+        process_group = _self_cgroup(tmp_path, f"2:cpu:{membership}\n")
+
+        assert cgroup_cpu_limit(cgroup, process_group) is None
+
+    @pytest.mark.parametrize(("v1", "v2"), [(2, 4), (4, 2)])
+    def test_the_tightest_available_controller_quota_wins(
+        self, cgroup: Path, tmp_path: Path, v1: int, v2: int
+    ) -> None:
+        _v1_quota(cgroup / "cpu" / "service", v1 * 100000)
+        _cpu_max(cgroup / "service", f"{v2 * 100000} 100000")
+        membership = "0::/service\n2:cpu:/service\n"
+
+        assert cgroup_cpu_limit(cgroup, _self_cgroup(tmp_path, membership)) == 2
 
 
 class TestUsableCpus:
@@ -144,6 +238,41 @@ class TestUsableCpus:
         with pytest.raises(RuntimeError, match="no CPU count"):
             usable_cpus(cgroup, _self_cgroup(tmp_path, CONTAINER_CGROUP))
 
+    @pytest.mark.parametrize("version", ["v1", "v2"])
+    @pytest.mark.parametrize(
+        ("quota", "jobs"),
+        [
+            (300000, 1),
+            (310000, 2),
+            (400000, 2),
+            (500000, 2),
+            (510000, 3),
+            (600000, 3),
+            (700000, 3),
+            (710000, 4),
+            (800000, 4),
+        ],
+    )
+    def test_fractional_quotas_preserve_the_slot_boundaries(
+        self,
+        cgroup: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        version: str,
+        quota: int,
+        jobs: int,
+    ) -> None:
+        monkeypatch.setattr(host_cpus.os, "process_cpu_count", lambda: 16)
+        if version == "v1":
+            _v1_quota(cgroup / "cpu" / "service", quota)
+            membership = "2:cpu:/service\n"
+        else:
+            _cpu_max(cgroup / "service", f"{quota} 100000")
+            membership = "0::/service\n"
+        process_group = _self_cgroup(tmp_path, membership)
+
+        assert native_jobs_for(usable_cpus(cgroup, process_group)) == jobs
+
 
 class TestNativeJobsFor:
     @pytest.mark.parametrize(
@@ -158,7 +287,9 @@ class TestNativeJobsFor:
             pytest.param(64, 4, id="sixty-four-cpus-stays-at-the-cap"),
         ],
     )
-    def test_runs_one_job_per_two_cpus_within_bounds(self, cpus: int, jobs: int) -> None:
+    def test_runs_one_job_per_two_cpus_within_bounds(
+        self, cpus: int, jobs: int
+    ) -> None:
         assert native_jobs_for(cpus) == jobs
 
     def test_rejects_a_count_below_one_cpu(self) -> None:

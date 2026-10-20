@@ -2,7 +2,9 @@
 
 ``os.process_cpu_count()`` honours CPU affinity but not a cgroup CPU quota: a
 container started with ``--cpus 4`` on a 12-core host reports 12. The kernel
-enforces the quota, so the usable count is the smaller of the two.
+enforces the quota, so the usable count is the smaller of the two. Positive
+fractional quotas round up to whole CPUs before deriving the slot default;
+this is a scheduling heuristic, not a bound on each worker's CPU use.
 """
 
 from __future__ import annotations
@@ -11,11 +13,10 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 
-# One native mesh job (load, measurements, render) peaks at about two cores:
-# the parser or tessellator plus the rasteriser and image encoder.
+# Scale the automatic slot count by CPU availability. Memory admission
+# independently limits which native jobs can run together.
 CPUS_PER_NATIVE_JOB = 2
-# Above this, memory admission rather than CPU decides concurrency on typical
-# self-hosted machines; more slots only add prepared-source copies in flight.
+# Keep automatic concurrency bounded; explicit overrides remain available.
 MAX_DEFAULT_NATIVE_JOBS = 4
 
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
@@ -31,7 +32,7 @@ def _quota_cpus(cpu_max: str) -> int | None:
 
 
 def _v2_groups(root: Path, self_cgroup: Path) -> list[Path]:
-    """The process's own v2 group and its ancestors, nearest first.
+    """The v2 mount root plus the process's own group and its ancestors.
 
     A container with a cgroup namespace exposes its group at the root; a host
     service sits below the mount, where a parent slice may carry the quota.
@@ -54,7 +55,36 @@ def _v2_groups(root: Path, self_cgroup: Path) -> list[Path]:
     return groups
 
 
-def cgroup_cpu_limit(root: Path = _CGROUP_ROOT, self_cgroup: Path = _SELF_CGROUP) -> int | None:
+def _v1_groups(root: Path, self_cgroup: Path) -> list[Path]:
+    """CPU-controller mount roots plus the process's v1 group and its ancestors."""
+    mounts = {root / "cpu"}
+    try:
+        mounts.update(path for path in root.iterdir() if "cpu" in path.name.split(","))
+    except OSError:
+        pass
+    groups = sorted(mounts)
+    try:
+        lines = self_cgroup.read_text().splitlines()
+    except OSError:
+        return groups
+    for line in lines:
+        fields = line.split(":", 2)
+        if len(fields) != 3 or "cpu" not in fields[1].split(","):
+            continue
+        membership = PurePosixPath(fields[2])
+        if not membership.is_absolute() or ".." in membership.parts:
+            continue
+        for mount in sorted(mounts):
+            group = mount.joinpath(*membership.parts[1:])
+            while group != mount:
+                groups.append(group)
+                group = group.parent
+    return groups
+
+
+def cgroup_cpu_limit(
+    root: Path = _CGROUP_ROOT, self_cgroup: Path = _SELF_CGROUP
+) -> int | None:
     """The tightest CPU quota on this process's cgroup path; None when none is set."""
     limits: list[int] = []
     for group in _v2_groups(root, self_cgroup):
@@ -64,13 +94,14 @@ def cgroup_cpu_limit(root: Path = _CGROUP_ROOT, self_cgroup: Path = _SELF_CGROUP
             continue
         if cpus is not None:
             limits.append(cpus)
-    try:  # cgroup v1: a quota of -1 means unlimited
-        quota = int((root / "cpu" / "cpu.cfs_quota_us").read_text())
-        period = int((root / "cpu" / "cpu.cfs_period_us").read_text())
+    for group in _v1_groups(root, self_cgroup):
+        try:  # cgroup v1: a quota of -1 means unlimited
+            quota = int((group / "cpu.cfs_quota_us").read_text())
+            period = int((group / "cpu.cfs_period_us").read_text())
+        except OSError:
+            continue
         if quota > 0:
             limits.append(max(1, math.ceil(quota / period)))
-    except OSError:
-        pass
     return min(limits) if limits else None
 
 

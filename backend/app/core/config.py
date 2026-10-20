@@ -337,7 +337,7 @@ class Settings(BaseSettings):
     # data root. This also defaults the derive.native lane. Memory reservations
     # can reduce actual concurrency when large models need more of the pool, so
     # the default follows CPUs alone: one job per two usable CPUs (cgroup quota
-    # included), between 1 and 4. Zero retains serial execution compatibility.
+    # rounded up to whole CPUs), between 1 and 4. Zero remains serial.
     max_render_jobs: int = Field(default_factory=default_native_jobs, ge=0)
 
     # Bounded prepared inputs, independent of native RAM. Zero jobs follows
