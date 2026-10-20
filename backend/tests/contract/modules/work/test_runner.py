@@ -72,53 +72,58 @@ def _states() -> dict[str, JobState]:
         )
 
 
-def test_running_interactive_job_prepares_bounded_successors(
-    tmp_path, dbos_databases
-) -> None:
-    catalog = contract_catalog()
-    catalog.lanes[SERIAL] = replace(catalog.lanes[SERIAL], queue_order=LaneOrder.FIFO)
-    catalog.definitions[DISCOVERED] = replace(
-        catalog.definition(DISCOVERED), lane=SERIAL, source=_PrioritySource()
-    )
-    app_url, system_db = dbos_databases
-    with (
-        shared_app_db(app_url),
-        harness_for("dbos", tmp_path, catalog=catalog, system_db=system_db) as harness,
-    ):
-        gate = threading.Event()
-        RECORD.discover.update(
-            {
+class TestBegin:
+    def test_running_interactive_job_prepares_bounded_successors(
+        self, tmp_path, dbos_databases
+    ) -> None:
+        catalog = contract_catalog()
+        catalog.lanes[SERIAL] = replace(
+            catalog.lanes[SERIAL], queue_order=LaneOrder.FIFO
+        )
+        catalog.definitions[DISCOVERED] = replace(
+            catalog.definition(DISCOVERED), lane=SERIAL, source=_PrioritySource()
+        )
+        app_url, system_db = dbos_databases
+        with (
+            shared_app_db(app_url),
+            harness_for(
+                "dbos", tmp_path, catalog=catalog, system_db=system_db
+            ) as harness,
+        ):
+            gate = threading.Event()
+            RECORD.discover.update(
+                {
+                    "interactive/0",
+                    "interactive/1",
+                    "interactive/2",
+                    "backfill/1",
+                    "backfill/2",
+                }
+            )
+            first = harness.job(DISCOVERED, "interactive/0", behaviour=gated(gate))
+            submission.submit(first)
+            harness.started("interactive/0")
+            harness.wait_for(lambda: len(_states()) >= 3)
+
+            # Another pass while the first job is held must not grow either quota.
+            run_pass(DISCOVERED)
+            assert _states() == {
+                "interactive/0": JobState.RUNNING,
+                "interactive/1": JobState.QUEUED,
+                "backfill/1": JobState.QUEUED,
+            }
+            assert RECORD.firsts() == ["interactive/0"]
+
+            gate.set()
+            harness.wait_for(lambda: not RECORD.discover)
+            harness.settle()
+
+            assert set(_states().values()) == {JobState.COMPLETED}
+            assert RECORD.firsts() == [
                 "interactive/0",
                 "interactive/1",
-                "interactive/2",
                 "backfill/1",
+                "interactive/2",
                 "backfill/2",
-            }
-        )
-        first = harness.job(DISCOVERED, "interactive/0", behaviour=gated(gate))
-        submission.submit(first)
-        harness.started("interactive/0")
-        harness.wait_for(lambda: len(_states()) >= 3)
-
-        # Another pass while the first job is held must not grow either quota.
-        run_pass(DISCOVERED)
-        assert _states() == {
-            "interactive/0": JobState.RUNNING,
-            "interactive/1": JobState.QUEUED,
-            "backfill/1": JobState.QUEUED,
-        }
-        assert RECORD.firsts() == ["interactive/0"]
-
-        gate.set()
-        harness.wait_for(lambda: not RECORD.discover)
-        harness.settle()
-
-        assert set(_states().values()) == {JobState.COMPLETED}
-        assert RECORD.firsts() == [
-            "interactive/0",
-            "interactive/1",
-            "backfill/1",
-            "interactive/2",
-            "backfill/2",
-        ]
-        assert RECORD.peak == 1
+            ]
+            assert RECORD.peak == 1
