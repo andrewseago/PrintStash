@@ -8,6 +8,7 @@ polling interval for nothing, or an idle server keeps paying for the fast one.
 
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -278,7 +279,34 @@ def fifo_dispatch(engine, request):
         return _submission(job, expedite=False)
 
 
-class TestInteractiveFifoDispatch:
+@pytest.fixture
+def later_fifo_dispatch(engine, fifo_dispatch):
+    """A distinct accepted submission sharing the first one's target queue."""
+    if isinstance(fifo_dispatch, PassSubmission):
+        return replace(fifo_dispatch, execution_id="later-discovery-pass")
+    job_id = engine.job(PLAIN, "fifo/later-interactive")
+    with get_session_factory().scoped_session() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        return _submission(job, expedite=False)
+
+
+class TestSubmit:
+    @pytest.mark.postgres
+    @pytest.mark.parametrize("system_db", ["postgres"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_postgres_fifo_dispatch_preserves_shared_queue_cadence(
+        self, engine, fifo_dispatch
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+
+        outcome = engine.engine.submit(fifo_dispatch)
+
+        assert outcome is SubmitOutcome.ACCEPTED
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
     @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
     def test_interactive_fifo_dispatch_boosts_its_queue(self, engine, fifo_dispatch):
         _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
@@ -341,6 +369,7 @@ class TestInteractiveFifoDispatch:
         assert engine.engine.boosted_lanes() == frozenset()
         assert _interval(engine, fifo_dispatch.lane) == 0.1
 
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
     @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
     def test_fifo_dispatch_boost_relaxes_after_activity(self, engine, fifo_dispatch):
         _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
@@ -362,6 +391,122 @@ class TestInteractiveFifoDispatch:
 
         assert engine.state(fifo_dispatch.job_id) is JobState.COMPLETED
         assert RECORD.firsts() == ["fifo/interactive"]
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_later_accepted_dispatch_renews_the_window(
+        self, engine, fifo_dispatch, later_fifo_dispatch
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 0.2
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        original_window_elapsed = time.monotonic() + 0.4
+        _overlay["jobs_queue_boost_seconds"] = 2.0
+
+        assert engine.engine.submit(later_fifo_dispatch) is SubmitOutcome.ACCEPTED
+        engine.wait_for(lambda: time.monotonic() >= original_window_elapsed)
+
+        assert _interval(engine, fifo_dispatch.lane) == 0.02
+        engine.wait_for(lambda: not engine.engine.boosted_lanes())
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize(
+        ("fifo_dispatch", "suffix", "expected"),
+        [
+            ("job", "", SubmitOutcome.EXISTING),
+            ("pass", "", SubmitOutcome.EXISTING),
+            ("job", "-duplicate", SubmitOutcome.DEDUPLICATED),
+        ],
+        indirect=["fifo_dispatch"],
+        ids=["job-id", "pass-id", "job-subject"],
+    )
+    def test_live_duplicate_keeps_the_original_expiry(
+        self, engine, fifo_dispatch, suffix, expected
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 0.2
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        _overlay["jobs_queue_boost_seconds"] = 30.0
+        duplicate = replace(
+            fifo_dispatch, execution_id=f"{fifo_dispatch.execution_id}{suffix}"
+        )
+
+        assert engine.engine.submit(duplicate) is expected
+        engine.wait_for(lambda: not engine.engine.boosted_lanes(), timeout=5.0)
+
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    @pytest.mark.parametrize(
+        ("window", "interval"),
+        [pytest.param(0.0, 0.02, id="disabled"), pytest.param(3.0, 0.2, id="slower")],
+    )
+    def test_fifo_dispatch_respects_disabled_boost(
+        self, engine, fifo_dispatch, window, interval
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = interval
+        _overlay["jobs_queue_boost_seconds"] = window
+
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_relaunch_restores_normal_polling(self, engine, fifo_dispatch):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 30.0
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        assert _interval(engine, fifo_dispatch.lane) == 0.02
+
+        engine.relaunch(app_version=VERSION, listen_lanes=[])
+
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_later_submission_starts_a_window_after_expiry(
+        self, engine, fifo_dispatch, later_fifo_dispatch
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        _overlay["jobs_queue_boost_seconds"] = 0.2
+        assert engine.engine.submit(fifo_dispatch) is SubmitOutcome.ACCEPTED
+        engine.wait_for(lambda: not engine.engine.boosted_lanes())
+
+        assert engine.engine.submit(later_fifo_dispatch) is SubmitOutcome.ACCEPTED
+
+        assert _interval(engine, fifo_dispatch.lane) == 0.02
+        assert engine.engine.boosted_lanes() == frozenset({fifo_dispatch.lane})
+
+    @pytest.mark.parametrize("system_db", ["sqlite"], indirect=True)
+    @pytest.mark.parametrize("fifo_dispatch", ["job", "pass"], indirect=True)
+    def test_polling_write_failure_preserves_accepted_execution(
+        self, engine, fifo_dispatch, caplog
+    ):
+        _overlay["jobs_boosted_queue_poll_interval_seconds"] = 0.02
+        with sqlite3.connect(engine.engine.url.removeprefix("sqlite:///")) as db:
+            db.execute(
+                "CREATE TRIGGER refuse_polling_change BEFORE UPDATE OF "
+                "polling_interval_sec ON queues BEGIN "
+                "SELECT RAISE(ABORT, 'polling configuration unavailable'); END"
+            )
+
+        outcome = engine.engine.submit(fifo_dispatch)
+
+        assert outcome is SubmitOutcome.ACCEPTED
+        assert (
+            engine.engine.evidence([fifo_dispatch.execution_id])[
+                fifo_dispatch.execution_id
+            ].status
+            is EngineStatus.QUEUED
+        )
+        assert _interval(engine, fifo_dispatch.lane) == 0.1
+        assert engine.engine.boosted_lanes() == frozenset()
+        assert "lane boost failed" in caplog.text
 
 
 @contextmanager

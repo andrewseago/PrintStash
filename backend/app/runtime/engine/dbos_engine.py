@@ -612,6 +612,7 @@ class DbosJobEngine(JobEngine):
         expedite = isinstance(submission, JobSubmission) and submission.expedite
         if (
             not expedite
+            and make_url(self.url).get_backend_name() == "sqlite"
             and submission.priority is WorkPriority.INTERACTIVE
             and not submission.delay_seconds
         ):
@@ -620,8 +621,10 @@ class DbosJobEngine(JobEngine):
                 if isinstance(submission, PassSubmission)
                 else self.catalog.lanes[submission.lane]
             )
-            # FIFO derivative work is still interactive. Boost its dispatch
-            # path while a batch arrives, including the pass that discovers it.
+            # SQLite has one engine owner, enforced by the application process
+            # lock and topology guard. PostgreSQL can share this queue setting
+            # across processes, whose local expiry timers cannot coordinate.
+            # Boost only the single-owner derivative path, including discovery.
             expedite = target.queue_order is LaneOrder.FIFO
         if expedite:
             self._boost(submission.lane)

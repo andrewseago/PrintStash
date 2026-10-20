@@ -128,11 +128,17 @@ path a pass uses, so no pass is queued to find it. Anything short of an
 accepted submission falls back to a nudge, and the repair pass remains the
 recovery. Because the engine finds queued work only by polling, that
 submission also boosts its lane's polling for a few seconds: the Job is picked
-up sooner, and so is the rest of a batch that follows it. Accepted immediate
-interactive Jobs on FIFO lanes also use that temporary boost, as do the
-reconcile passes discovering their work. This automatic boost excludes delayed
-and backfill submissions. It changes polling configuration through the
-engine SDK; it does not interrupt a poll already waiting.
+up sooner, and so is the rest of a batch that follows it.
+
+On SQLite, accepted immediate interactive Jobs on FIFO lanes also use that
+temporary boost, as do the reconcile passes discovering their work. Duplicate,
+delayed and backfill submissions do not start or renew this automatic boost.
+SQLite's process lock and topology guard ensure a single engine owner. The
+extension does not apply to PostgreSQL: its queue configuration is shared by
+multiple processes, while boost expiry is local to each process. Existing
+explicit request boosts keep their current policy. A boost changes polling
+configuration through the engine SDK; it does not interrupt a poll already
+waiting, and is a latency hint rather than an execution guarantee.
 
 The dirty mark is a write, so it travels with a write that already happens.
 `nudge_after_commit` stamps it as the caller's transaction commits, and a Job's
