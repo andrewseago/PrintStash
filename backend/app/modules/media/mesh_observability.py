@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.core.metrics import registry
 from app.modules.media.mesh_telemetry import (
     AdmissionStats,
+    EstimateStats,
     PhaseStats,
     SupervisionStats,
 )
@@ -77,6 +78,37 @@ _admission_memory = Histogram(
     buckets=(2**24, 2**26, 2**28, 2**29, 2**30, 2**32),
     registry=registry,
 )
+
+
+_estimate_duration = Histogram(
+    "printstash_mesh_estimate_duration_seconds",
+    "Supervisor preflight time spent sizing a native claim.",
+    ("basis",),
+    registry=registry,
+)
+
+
+def record_estimate(stats: EstimateStats) -> None:
+    try:
+        logger.info(
+            "mesh_estimate %s",
+            json.dumps(
+                {
+                    "version": 1,
+                    "process_id": os.getpid(),
+                    "process_role": settings.process_role.value,
+                    **asdict(stats),
+                },
+                allow_nan=False,
+                separators=(",", ":"),
+            ),
+        )
+        _estimate_duration.labels(stats.basis.value).observe(
+            stats.elapsed_ns / 1_000_000_000
+        )
+    except Exception:
+        # Telemetry is best-effort and must never alter the claim itself.
+        logger.exception("failed to publish mesh estimate metrics")
 
 
 def record_admission(stats: AdmissionStats) -> None:

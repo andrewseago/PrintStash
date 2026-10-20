@@ -23,10 +23,17 @@ timeouts retain the configured bounded retry policy.
 
 Native admission shares one byte and slot budget across processes using the
 same local data root. Descriptor ownership recovers stale records across reboots. Binary STL preflight reads the fixed header
-and exact file size; its face count selects a memory weight. Unknown complexity
-reserves the whole pool. Weights use the greater of the measured startup floor
-and historical whole-pipeline cost per face, capped by the configured pool.
-These are scheduling estimates; the hard process limit remains authoritative.
+and exact file size; its face count selects a memory weight. A 3MF package is
+streamed once without parsing its XML: object, component and build-item tags
+give the faces placed through every reachable placement, and the parts the
+reader will parse give its XML bytes. Both are upper bounds; the claim covers
+the measured whole-pipeline cost of each and the loader's own per-face ceiling.
+Fingerprint analysis of a 3MF, a package the scan cannot bound with certainty,
+and a scan that exceeds its 500 ms CPU or one-second wall allowance keep the
+whole-pool claim. Unknown complexity reserves the whole pool. Weights use the
+greater of the measured startup floor and historical whole-pipeline cost per
+face, capped by the configured pool. These are scheduling estimates; the hard
+process limit remains authoritative.
 
 `max_render_jobs` limits simultaneous jobs without dividing the maximum mesh
 size by that count. A large job can wait and use the whole pool. FIFO order starts
@@ -53,7 +60,9 @@ See [ADR-0012](adr/0012-local-native-resource-admission.md) for deployment bound
 
 `mesh_admission` JSON and Prometheus admission histograms report queue duration,
 requested resources and admitted/cancelled/deadline/failed outcomes separately
-from worker supervision. Nested or inherited calls do not emit another queue
+from worker supervision. `mesh_estimate` JSON records each preflight's source
+formats and bytes, whether it counted the source or claimed the pool, the claim,
+and its own duration (`printstash_mesh_estimate_duration_seconds`). Nested or inherited calls do not emit another queue
 record. Process metrics retain their existing exit and memory observations.
 
 CAD tessellation and STL streaming inside a mesh worker use its existing process,
