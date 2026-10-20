@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- Native mesh processing now chooses a bounded concurrency default from the CPUs
-  available to PrintStash. Explicit concurrency settings and shared memory
-  admission continue to apply.
-
 - PrintStash now keeps a manifest for the Cosmos Cloud market
   (`azukaar/cosmos-servapps-official`) next to the other store catalogues, with the
   install dialog creating the first administrator and the same memory budgets the
@@ -79,6 +75,10 @@
   disconnected peers without the same descriptor limit. Warm workers preserve
   high-numbered resource permits and close every unrelated descriptor before
   processing a model.
+
+- Native mesh processing now chooses a bounded concurrency default from the CPUs
+  available to PrintStash. Explicit concurrency settings and shared memory
+  admission continue to apply.
 
 - An idle server on SQLite no longer uses more CPU the longer it runs. Each
   background-work lane keeps checking for queued work on a short interval, and on
