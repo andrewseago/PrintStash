@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Native mesh processing now chooses a bounded concurrency default from the CPUs
+  available to PrintStash. Explicit concurrency settings and shared memory
+  admission continue to apply.
+
 - PrintStash now keeps a manifest for the Cosmos Cloud market
   (`azukaar/cosmos-servapps-official`) next to the other store catalogues, with the
   install dialog creating the first administrator and the same memory budgets the
