@@ -85,6 +85,10 @@
   high-numbered resource permits and close every unrelated descriptor before
   processing a model.
 
+- Native mesh processing now chooses a bounded concurrency default from the CPUs
+  available to PrintStash. Explicit concurrency settings and shared memory
+  admission continue to apply.
+
 - An idle server on SQLite no longer uses more CPU the longer it runs. Each
   background-work lane keeps checking for queued work on a short interval, and on
   SQLite every check read the engine's entire workflow history, which the

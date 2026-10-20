@@ -413,7 +413,7 @@ path outside a persistent mount loses state on container replacement.
 | `VAULT_PROCESS_ROLE` | `all` | `all` runs HTTP and every background Job; `api` is the one HTTP process of a deployment with [workers](#background-work-and-workers). |
 | `VAULT_API_RUNS_JOBS` | `true` | With `api`, whether the API also runs Jobs; `false` leaves them to the workers. |
 | `VAULT_SHARED_STORAGE` | `false` | Declares that every process mounts the same volumes; required with workers. |
-| `VAULT_MAX_RENDER_JOBS` | `1` | Mesh renders and local AI inference at once, per process; raise it on hosts with spare RAM. |
+| `VAULT_MAX_RENDER_JOBS` | one per two usable CPUs, 1–4 | Native mesh job slots across processes sharing a local data root; also limits local AI inference in each process. Usable CPUs include the container's CPU limit (`--cpus`, `cpus:`), with positive fractional quotas rounded up to whole CPUs before deriving the default. Full-pool memory claims run alone; other claims may overlap within the same budget. Set `1` to render strictly one at a time. |
 | `VAULT_JOBS_INGEST_CONCURRENCY` | `2` | Uploads and imports committed at once. |
 
 Settings → Background work overrides each kind of work's concurrency at runtime,

@@ -21,6 +21,8 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.host_cpus import default_native_jobs
+
 # ---------------------------------------------------------------------------
 # Shared overlay dict — written by runtime_config, read by ConfigResolver.
 # Protected by _overlay_lock for writes; reads are GIL-safe dict lookups.
@@ -333,9 +335,10 @@ class Settings(BaseSettings):
 
     # Maximum simultaneous native mesh jobs across processes sharing this local
     # data root. This also defaults the derive.native lane. Memory reservations
-    # can reduce actual concurrency when large models need more of the pool.
-    # One is the safe default; zero retains serial execution compatibility.
-    max_render_jobs: int = Field(default=1, ge=0)
+    # can reduce actual concurrency when large models need more of the pool, so
+    # the default follows CPUs alone: one job per two usable CPUs (cgroup quota
+    # rounded up to whole CPUs), between 1 and 4. Zero remains serial.
+    max_render_jobs: int = Field(default_factory=default_native_jobs, ge=0)
 
     # Bounded prepared inputs, independent of native RAM. Zero jobs follows
     # max_render_jobs + one waiting batch (at least two). Bytes account for two
@@ -508,6 +511,13 @@ class Settings(BaseSettings):
 
     app_name: str = "PrintStash"
     app_version: str = "0.14.0"
+
+    @field_validator("max_render_jobs", mode="before")
+    @classmethod
+    def native_jobs_follow_cpus(cls, value: object) -> object:
+        # An empty override (``VAULT_MAX_RENDER_JOBS=``, as an unset Compose
+        # variable renders) means the CPU-derived default, never zero.
+        return default_native_jobs() if value == "" else value
 
     @field_validator(*DATA_ROOT_LAYOUT, "db_url", mode="before")
     @classmethod
