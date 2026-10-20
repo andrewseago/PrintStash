@@ -661,6 +661,65 @@ class TestThreeMFCapabilities:
         assert still_ready.content == image_response.content
 
 
+async def _sample(api, name: str, labels: dict[str, str]) -> float:
+    from prometheus_client.parser import text_string_to_metric_families
+
+    response = await api.get("/metrics")
+    assert response.status_code == 200, response.text
+    values = [
+        sample.value
+        for family in text_string_to_metric_families(response.text)
+        for sample in family.samples
+        if sample.name == name and sample.labels == labels
+    ]
+    # Prometheus publishes a labelled series only once it has been observed.
+    return values[0] if values else 0.0
+
+
+class TestThreeMFAdmission:
+    @pytest.mark.asyncio
+    async def test_a_small_3mf_derives_under_a_sized_native_claim(
+        self, api, tmp_path, e2e_db
+    ):
+        """A countable package no longer reserves the whole native pool.
+
+        Its admission is weighted by its bounded structure, so a second small
+        package can run beside it; the guarded worker still completes both
+        outputs under that smaller hard ceiling.
+        """
+        counted = (
+            "printstash_mesh_estimate_duration_seconds_count",
+            {"basis": "counted"},
+        )
+        sized = (
+            "printstash_mesh_admission_requested_bytes_bucket",
+            {"outcome": "admitted", "le": "1.073741824e+09"},
+        )
+        headers = await _setup_and_login(api, tmp_path)
+        counted_before = await _sample(api, *counted)
+        sized_before = await _sample(api, *sized)
+
+        uploaded = await api.post(
+            "/api/v1/ingest/model",
+            files={"file": ("part.3mf", three_mf(), "model/3mf")},
+            data={"model_name": "Sized claim"},
+            headers=headers,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        job = await _await_job(api, headers, uploaded.json()["job_id"])
+        assert job["state"] == "completed", job
+        thumbnail = await _thumbnail_derivative(api, headers, job["file_id"])
+
+        assert thumbnail["state"] == "ready", thumbnail
+        derivatives = await api.get(
+            f"/api/v1/files/{job['file_id']}/derivatives", headers=headers
+        )
+        metadata = next(row for row in derivatives.json() if row["kind"] == "metadata")
+        assert metadata["state"] == "ready", metadata
+        assert await _sample(api, *counted) > counted_before
+        assert await _sample(api, *sized) > sized_before
+
+
 class TestHardlinklessStaging:
     @pytest.mark.asyncio
     async def test_uploads_with_visible_staging_degradation(
@@ -985,7 +1044,7 @@ class TestStagedMeshOutputs:
             "import json,sys,time\n"
             "from pathlib import Path\n"
             "from app.core.native_settings import install\n"
-            "install(json.loads(sys.argv[1])[\"native_settings\"])\n"
+            'install(json.loads(sys.argv[1])["native_settings"])\n'
             "from app.modules.media import thumbnail_engine,mesh_worker\n"
             f"started=Path({str(started)!r}); release=Path({str(release)!r})\n"
             "extract=thumbnail_engine.extract\n"

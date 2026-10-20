@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 3MF thumbnails and measurements no longer reserve the whole native memory
+  pool. The supervisor bounds each package's placed faces and parsed XML
+  without parsing it, so small and medium 3MF files are derived side by side
+  instead of one at a time. Fingerprint analysis, packages that cannot be
+  bounded, and very large packages keep the whole-pool claim. A new
+  `mesh_estimate` log and `printstash_mesh_estimate_duration_seconds` histogram
+  report each claim.
+
 - Library Back and Forward keep the same visible reading position when a
   revision notice changes the page height.
 
