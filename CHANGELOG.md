@@ -2,16 +2,16 @@
 
 ## Unreleased
 
-- SQLite installations temporarily poll interactive derivative work and its
-  discovery passes more frequently after accepting a submission. Duplicate,
-  delayed and backfill submissions keep the ordinary polling policy; the
-  temporary interval expires after activity stops.
-
 - PrintStash now keeps a manifest for the Cosmos Cloud market
   (`azukaar/cosmos-servapps-official`) next to the other store catalogues, with the
   install dialog creating the first administrator and the same memory budgets the
   other stores pass. Nothing changes for existing installations; the store
   submission is a separate step, described in `catalogues/README.md`.
+
+- SQLite installations temporarily poll interactive derivative work and its
+  discovery passes more frequently after accepting a submission. Duplicate,
+  delayed and backfill submissions keep the ordinary polling policy; the
+  temporary interval expires after activity stops.
 
 - The Model filters panel lists G-code below a divider, after the source formats
   it is sliced from, and writes formats as STL, 3MF, OBJ, STEP, DXF and G-code.
