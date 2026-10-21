@@ -721,6 +721,49 @@ class TestThreeMFAdmission:
         assert await _sample(api, *sized) > sized_before
 
 
+class TestStepAdmission:
+    @pytest.mark.asyncio
+    async def test_a_step_derives_under_the_optimistic_claim(
+        self, api, tmp_path, e2e_db
+    ):
+        """A STEP part no longer reserves the whole native pool up front.
+
+        It is admitted under the optimistic claim and its worker completes
+        both outputs inside it; only a part that does not fit runs again.
+        """
+        optimistic = (
+            "printstash_mesh_admission_requested_bytes_bucket",
+            {"outcome": "admitted", "le": "1.073741824e+09"},
+        )
+        escalated = (
+            "printstash_mesh_escalations_total",
+            {"file_type": "stp", "reason": "resource_limit"},
+        )
+        headers = await _setup_and_login(api, tmp_path)
+        optimistic_before = await _sample(api, *optimistic)
+        escalated_before = await _sample(api, *escalated)
+
+        uploaded = await api.post(
+            "/api/v1/ingest/model",
+            files={
+                "file": (
+                    "part.stp",
+                    (FIXTURES_DIR / "cascadio_material.stp").read_bytes(),
+                    "model/step",
+                )
+            },
+            data={"model_name": "STEP admission"},
+            headers=headers,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        job = await _await_job(api, headers, uploaded.json()["job_id"])
+        thumbnail = await _thumbnail_derivative(api, headers, job["file_id"])
+
+        assert thumbnail["state"] == "ready", thumbnail
+        assert await _sample(api, *optimistic) > optimistic_before
+        assert await _sample(api, *escalated) == escalated_before
+
+
 class TestStepTessellation:
     @pytest.mark.asyncio
     async def test_a_step_is_derived_at_its_own_recipes(self, api, tmp_path, e2e_db):

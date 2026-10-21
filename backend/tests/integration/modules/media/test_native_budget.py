@@ -48,6 +48,49 @@ class TestFaceCapacity:
         assert native_budget.face_capacity(3000 * 1000, ".stl", lib3mf=True) == 1000
 
 
+class TestOptimisticStepClaim:
+    def test_claims_the_optimistic_allowance_for_a_thumbnail(self):
+        assert native_budget.optimistic_step_claim(
+            Resources(2, 4 * 1024**3), THUMBNAIL_WORK
+        ) == Resources(1, native_budget.STEP_OPTIMISTIC_MEMORY)
+
+    def test_claims_the_optimistic_allowance_for_geometry(self):
+        assert native_budget.optimistic_step_claim(
+            Resources(2, 4 * 1024**3), native_budget.GeometryWork()
+        ) == Resources(1, native_budget.STEP_OPTIMISTIC_MEMORY)
+
+    def test_adds_the_workspace_of_a_larger_raster(self):
+        raster = native_budget.RasterWork(1280, 960, 1, native_budget.RasterCodec.WEBP)
+
+        claim = native_budget.optimistic_step_claim(Resources(2, 4 * 1024**3), raster)
+
+        assert claim == Resources(
+            1,
+            native_budget.STEP_OPTIMISTIC_MEMORY
+            + (1280 * 960 - native_budget.QUALIFIED_RASTER_PIXELS)
+            * native_budget.RASTER_PIXEL_BYTES,
+        )
+
+    def test_keeps_fingerprint_analysis_out_of_the_optimistic_claim(self):
+        assert (
+            native_budget.optimistic_step_claim(
+                Resources(2, 4 * 1024**3), native_budget.AnalysisWork(THUMBNAIL_WORK)
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize(
+        "pool_bytes", [1024**3, 512 * 1024**2], ids=["equal", "smaller"]
+    )
+    def test_declines_a_pool_no_larger_than_the_optimistic_claim(self, pool_bytes):
+        assert (
+            native_budget.optimistic_step_claim(
+                Resources(2, pool_bytes), THUMBNAIL_WORK
+            )
+            is None
+        )
+
+
 class TestEstimateSources:
     @pytest.mark.parametrize(
         "payload",
@@ -738,7 +781,10 @@ class TestCallerProfiles:
             sources,
             work,
             on_chunk=None,
+            amount=None,
         ):
+            # Other formats keep the estimate: no claim is imposed on it.
+            assert amount is None
             captured.append((sources, work))
             raise _CapturedWork
 

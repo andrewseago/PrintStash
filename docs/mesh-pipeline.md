@@ -34,7 +34,17 @@ that reader's measured whole-pipeline cost and its loader ceiling: 512 MiB plus
 bytes per face through the XML reader. The answer is remembered per unchanged
 file, so a package's metadata and thumbnail scan it once. Fingerprint analysis
 of a 3MF, a package the scan cannot bound with certainty, and a scan that
-exceeds its 2 s CPU or 4 s wall allowance keep the whole-pool claim. Unknown complexity reserves the whole pool. Weights use the
+exceeds its 2 s CPU or 4 s wall allowance keep the whole-pool claim.
+
+A STEP part's tessellation density is unknown until it runs, so its metadata
+and preview derivative is first admitted under an optimistic 1 GiB claim; at
+0.05 mm every part of a mixed corpus peaked under 620 MiB. The supervisor holds
+that attempt's outputs. If the worker is refused for memory, its result is a
+resource limit, or OCCT crashes on a failed allocation, the outputs are
+discarded and the derivative runs once more under the whole pool, so nothing
+is published twice. Each such run is logged as `mesh_escalation` and counted
+in `printstash_mesh_escalations_total`. Fingerprint analysis, viewer
+conversion and callers that already hold a permit keep the whole-pool claim. Unknown complexity reserves the whole pool. Weights use the
 greater of the measured startup floor and historical whole-pipeline cost per
 face, capped by the configured pool. These are scheduling estimates; the hard
 process limit remains authoritative.

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- STEP measurements and previews no longer reserve the whole native memory
+  pool. Each part is first admitted under 1 GiB, so STEP files are derived
+  alongside other work instead of one at a time; a part that does not fit runs
+  once more with the whole pool, and nothing is published twice. A new
+  `mesh_escalation` log and `printstash_mesh_escalations_total` counter report
+  those reruns.
+
 - STEP files are tessellated at 0.05 mm instead of 0.01 mm, the precision the
   similarity fingerprints already used: about a quarter of the triangles, so
   STEP measurements, previews and viewer models are made roughly four times

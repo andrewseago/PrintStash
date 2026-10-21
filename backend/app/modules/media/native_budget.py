@@ -60,12 +60,16 @@ THREE_MF_LIB3MF_XML_BYTE_COST = 6
 # part dominates (about 1.2 s CPU for 155 MB of model XML). Packages lib3mf
 # reads claim a fraction of the pool even at 1.8M faces, so the scan is worth
 # finishing for them.
-# Whole-pipeline worker VmPeak for STEP over a mixed corpus: a 470 MiB start,
-# then 570-850 bytes per tessellated face; 1,500 keeps the loader's ceiling
-# inside the permit with headroom.
-STEP_FACE_BYTES = 1500
 THREE_MF_PREFLIGHT_WALL_SECONDS = 4.0
 THREE_MF_PREFLIGHT_CPU_SECONDS = 2.0
+# Whole-pipeline worker VmPeak for STEP over a mixed corpus: a 470 MiB start,
+# then 570-850 bytes per tessellated face, so 1,500 keeps the loader's ceiling
+# inside the permit.
+STEP_FACE_BYTES = 1500
+# Tessellation density is unknown until it runs. At 0.05 mm every part of that
+# corpus peaked under 620 MiB, so a derivative first claims 1 GiB and runs
+# once more under the whole pool if that is not enough.
+STEP_OPTIMISTIC_MEMORY = 1024**3
 # Optional text preflight must stay cheap in the supervisor. OBJ gets a
 # separate CPU allowance and wall watchdog: runnable-thread contention must not
 # turn a countable source into a whole-pool claim. Check at bounded 128-line
@@ -434,6 +438,19 @@ def _three_mf_claim(
         ),
     )
     return Resources(1, min(pool.bytes, claim + incremental))
+
+
+def optimistic_step_claim(pool: Resources, work: WorkProfile) -> Resources | None:
+    """A STEP derivative's first claim, or ``None`` when it cannot be smaller.
+
+    Only a caller that runs the work again with the whole pool on a memory
+    refusal may ask for it.
+    """
+    if not isinstance(work, (GeometryWork, RasterWork)):
+        return None
+    minimum, incremental, _face_bytes = _work_memory(work)
+    amount = max(minimum, STEP_OPTIMISTIC_MEMORY) + incremental
+    return Resources(1, amount) if amount < pool.bytes else None
 
 
 def _source_bytes(sources: tuple[MeshSource, ...]) -> int | None:
