@@ -50,10 +50,18 @@ THREE_MF_FACE_BYTES = 3600
 THREE_MF_BASE_MEMORY = 512 * 1024**2
 THREE_MF_PIPELINE_FACE_BYTES = 2000
 THREE_MF_XML_BYTE_COST = 24
-# Counting structure streams each part once in the supervisor. Larger packages
-# claim nearly the whole pool anyway; their scan is not worth its CPU there.
-THREE_MF_PREFLIGHT_WALL_SECONDS = 1.0
-THREE_MF_PREFLIGHT_CPU_SECONDS = 0.5
+# The same pipeline with scenes read by lib3mf, over the packages it reads: at
+# most 330 bytes per placed face or 4 per model XML byte above that start. The
+# claim keeps >= 25% headroom, and the loader's ceilings use the same weight
+# once the worker has read the scene through lib3mf.
+THREE_MF_LIB3MF_FACE_BYTES = 600
+THREE_MF_LIB3MF_XML_BYTE_COST = 6
+# Counting structure streams each part once in the supervisor; inflating the
+# part dominates (about 1.2 s CPU for 155 MB of model XML). Packages lib3mf
+# reads claim a fraction of the pool even at 1.8M faces, so the scan is worth
+# finishing for them.
+THREE_MF_PREFLIGHT_WALL_SECONDS = 4.0
+THREE_MF_PREFLIGHT_CPU_SECONDS = 2.0
 # Optional text preflight must stay cheap in the supervisor. OBJ gets a
 # separate CPU allowance and wall watchdog: runnable-thread contention must not
 # turn a countable source into a whole-pool claim. Check at bounded 128-line
@@ -190,11 +198,12 @@ def request(
     return Resources(1, min(pool.bytes, max(minimum, geometry) + incremental))
 
 
-def face_capacity(memory: int, suffix: str) -> int:
+def face_capacity(memory: int, suffix: str, *, lib3mf: bool = False) -> int:
     if type(memory) is not int or memory <= 0:
         raise ValueError("admitted memory must be a positive integer")
-    cost = THREE_MF_FACE_BYTES if suffix.lower() == ".3mf" else DEFAULT_FACE_BYTES
-    return memory // cost
+    if suffix.lower() != ".3mf":
+        return memory // DEFAULT_FACE_BYTES
+    return memory // (THREE_MF_LIB3MF_FACE_BYTES if lib3mf else THREE_MF_FACE_BYTES)
 
 
 def _obj_triangle_count(path: Path, *, deadline: float) -> int | None:
@@ -391,10 +400,22 @@ def _three_mf_claim(
         wall_seconds=THREE_MF_PREFLIGHT_WALL_SECONDS,
         cpu_seconds=THREE_MF_PREFLIGHT_CPU_SECONDS,
     )
-    if measured is None:
+    # A package beyond the reader's face ceiling is refused once it is read;
+    # until then it is as unknown as one the scan could not bound.
+    if measured is None or measured.placed_faces > MAX_ANALYSIS_FACES:
         return None
     minimum, incremental, face_bytes = _work_memory(work)
     faces = measured.placed_faces
+    if measured.lib3mf_readable:
+        claim = max(
+            minimum,
+            THREE_MF_BASE_MEMORY
+            + max(
+                faces * THREE_MF_LIB3MF_FACE_BYTES,
+                measured.reached_model_bytes * THREE_MF_LIB3MF_XML_BYTE_COST,
+            ),
+        )
+        return Resources(1, min(pool.bytes, claim + incremental))
     # The loader derives its face ceiling from the permit (`face_capacity`), so
     # the claim must admit every placed face at that weight as well.
     claim = max(

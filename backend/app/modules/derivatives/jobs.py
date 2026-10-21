@@ -68,15 +68,24 @@ def _hooks(derivative_group: DerivativeGroup):
                 from .mesh_continuations import withdraw_current_job
 
                 withdraw_current_job(session, file_id_of(subject_key))
-            records.cancel(session, file_row, derivative_group.kinds, now=utcnow())
+            records.cancel(
+                session,
+                file_row,
+                derivative_group.recipes_for(file_row.file_type),
+                now=utcnow(),
+            )
 
     def on_failure(session: Session, subject_key: str, reason: str) -> None:
+        # Trashed Artifacts keep their rows; a purged one took them with it.
+        file_row = session.get(File, file_id_of(subject_key))
+        if file_row is None:
+            return
         records.fail_in_flight(
             session,
             file_id_of(subject_key),
             reason,
             now=utcnow(),
-            kinds=derivative_group.kinds,
+            kinds=derivative_group.recipes_for(file_row.file_type),
         )
 
     def retry(session: Session, subject_key: str) -> bool:
@@ -85,7 +94,9 @@ def _hooks(derivative_group: DerivativeGroup):
         file_row = _file(session, subject_key)
         if file_row is None:
             return False
-        records.reset(session, file_row, derivative_group.kinds)
+        records.reset(
+            session, file_row, derivative_group.recipes_for(file_row.file_type)
+        )
         return True
 
     return cancel, on_failure, retry

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.media import mesh_policy, native_budget
+from app.modules.media import mesh_policy, native_budget, three_mf_bounds
 from app.runtime.native_admission import LocalResourcePool, Resources
 from app.runtime.native_runtime import admit
 from tests.factories.content import ascii_stl, binary_stl, zip_bytes
@@ -25,6 +25,23 @@ def _estimates(caplog) -> list[dict]:
         for record in caplog.records
         if record.getMessage().startswith("mesh_estimate ")
     ]
+
+
+@pytest.fixture
+def without_lib3mf(monkeypatch):
+    """A platform without lib3mf: the worker reads every 3MF as XML."""
+    monkeypatch.setattr(three_mf_bounds, "lib3mf_available", lambda: False)
+
+
+class TestFaceCapacity:
+    def test_weighs_a_lib3mf_scene_by_its_own_weight(self):
+        assert native_budget.face_capacity(600 * 1000, ".3mf", lib3mf=True) == 1000
+
+    def test_weighs_an_xml_scene_by_the_xml_weight(self):
+        assert native_budget.face_capacity(3600 * 1000, ".3mf") == 1000
+
+    def test_ignores_the_lib3mf_weight_outside_3mf(self):
+        assert native_budget.face_capacity(3000 * 1000, ".stl", lib3mf=True) == 1000
 
 
 class TestEstimateSources:
@@ -408,7 +425,44 @@ class TestEstimateSources:
 
         assert amount == Resources(1, native_budget.MIN_WEBP_MEMORY)
 
-    def test_loader_admits_every_placed_3mf_face_under_its_claim(self, tmp_path):
+    def test_loader_admits_every_placed_lib3mf_face_under_its_claim(self, tmp_path):
+        components = [(1, f"1 0 0 0 1 0 0 0 1 {i} 0 0") for i in range(300)]
+        placements = tuple((2, f"1 0 0 0 1 0 0 0 1 0 {i} 0") for i in range(300))
+        source = tmp_path / "plate.3mf"
+        source.write_bytes(three_mf(assemblies={2: components}, build=placements))
+        placed_faces = len(tetrahedron().faces) * len(components) * len(placements)
+        pool = Resources(4, 4 * 1024**3)
+
+        amount = native_budget.estimate_sources(
+            pool, (native_budget.MeshSource(source, "3mf"),)
+        )
+
+        assert (
+            native_budget.face_capacity(amount.bytes, ".3mf", lib3mf=True)
+            >= placed_faces
+        )
+
+    def test_claims_a_lib3mf_package_by_the_lib3mf_weight(self, tmp_path):
+        components = [(1, f"1 0 0 0 1 0 0 0 1 {i} 0 0") for i in range(300)]
+        placements = tuple((2, f"1 0 0 0 1 0 0 0 1 0 {i} 0") for i in range(300))
+        source = tmp_path / "plate.3mf"
+        source.write_bytes(three_mf(assemblies={2: components}, build=placements))
+        placed_faces = len(tetrahedron().faces) * len(components) * len(placements)
+
+        amount = native_budget.estimate_sources(
+            Resources(4, 4 * 1024**3), (native_budget.MeshSource(source, "3mf"),)
+        )
+
+        # 360,000 placed faces: the XML weight would claim 1.3 GB of the pool.
+        assert amount.bytes < placed_faces * native_budget.THREE_MF_FACE_BYTES
+        assert amount.bytes >= (
+            native_budget.THREE_MF_BASE_MEMORY
+            + placed_faces * native_budget.THREE_MF_LIB3MF_FACE_BYTES
+        )
+
+    def test_loader_admits_every_placed_xml_face_under_its_claim(
+        self, tmp_path, without_lib3mf
+    ):
         components = [(1, f"1 0 0 0 1 0 0 0 1 {i} 0 0") for i in range(300)]
         placements = tuple((2, f"1 0 0 0 1 0 0 0 1 0 {i} 0") for i in range(300))
         source = tmp_path / "plate.3mf"
@@ -423,7 +477,9 @@ class TestEstimateSources:
         assert amount.bytes < pool.bytes
         assert native_budget.face_capacity(amount.bytes, ".3mf") >= placed_faces
 
-    def test_attribute_heavy_3mf_claims_its_reached_xml(self, tmp_path):
+    def test_attribute_heavy_xml_package_claims_its_reached_xml(
+        self, tmp_path, without_lib3mf
+    ):
         with zipfile.ZipFile(io.BytesIO(three_mf())) as archive:
             model = archive.read("3D/3dmodel.model")
         painted = model.replace(b"<vertex ", b'<vertex paint="' + b"4" * 4096 + b'" ')
@@ -438,6 +494,23 @@ class TestEstimateSources:
             amount.bytes
             >= native_budget.THREE_MF_BASE_MEMORY
             + len(painted) * native_budget.THREE_MF_XML_BYTE_COST
+        )
+
+    def test_attribute_heavy_lib3mf_package_claims_its_reached_xml(self, tmp_path):
+        with zipfile.ZipFile(io.BytesIO(three_mf())) as archive:
+            model = archive.read("3D/3dmodel.model")
+        painted = model.replace(b"<vertex ", b'<vertex paint="' + b"4" * 65536 + b'" ')
+        source = tmp_path / "painted.3mf"
+        source.write_bytes(zip_bytes({"3D/3dmodel.model": painted}))
+
+        amount = native_budget.estimate_sources(
+            Resources(4, 4 * 1024**3), (native_budget.MeshSource(source, "3mf"),)
+        )
+
+        assert (
+            amount.bytes
+            >= native_budget.THREE_MF_BASE_MEMORY
+            + len(painted) * native_budget.THREE_MF_LIB3MF_XML_BYTE_COST
         )
 
     def test_3mf_fingerprint_analysis_keeps_the_whole_pool(self, tmp_path):
