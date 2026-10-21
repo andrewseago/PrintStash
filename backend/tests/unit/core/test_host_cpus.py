@@ -240,27 +240,23 @@ class TestUsableCpus:
 
     @pytest.mark.parametrize("version", ["v1", "v2"])
     @pytest.mark.parametrize(
-        ("quota", "jobs"),
+        ("quota", "cpus"),
         [
-            (300000, 1),
-            (310000, 2),
-            (400000, 2),
-            (500000, 2),
-            (510000, 3),
-            (600000, 3),
-            (700000, 3),
-            (710000, 4),
-            (800000, 4),
+            (300000, 3),
+            (310000, 4),
+            (400000, 4),
+            (510000, 6),
+            (710000, 8),
         ],
     )
-    def test_fractional_quotas_preserve_the_slot_boundaries(
+    def test_fractional_quotas_round_up_to_whole_cpus(
         self,
         cgroup: Path,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         version: str,
         quota: int,
-        jobs: int,
+        cpus: int,
     ) -> None:
         monkeypatch.setattr(host_cpus.os, "process_cpu_count", lambda: 16)
         if version == "v1":
@@ -271,27 +267,106 @@ class TestUsableCpus:
             membership = "0::/service\n"
         process_group = _self_cgroup(tmp_path, membership)
 
-        assert native_jobs_for(usable_cpus(cgroup, process_group)) == jobs
+        assert usable_cpus(cgroup, process_group) == cpus
 
 
 class TestNativeJobsFor:
     @pytest.mark.parametrize(
-        ("cpus", "jobs"),
+        ("cpus", "pool_gib", "jobs"),
         [
-            pytest.param(1, 1, id="one-cpu"),
-            pytest.param(2, 1, id="two-cpus"),
-            pytest.param(3, 1, id="three-cpus"),
-            pytest.param(4, 2, id="four-cpus"),
-            pytest.param(7, 3, id="seven-cpus"),
-            pytest.param(8, 4, id="eight-cpus-reaches-the-cap"),
-            pytest.param(64, 4, id="sixty-four-cpus-stays-at-the-cap"),
+            pytest.param(1, 2, 2, id="one-cpu"),
+            pytest.param(2, 2, 3, id="two-cpus-four-gib-host"),
+            pytest.param(3, 3, 4, id="three-cpus-six-gib-host"),
+            pytest.param(4, 4, 5, id="four-cpus-eight-gib-host"),
         ],
     )
-    def test_runs_one_job_per_two_cpus_within_bounds(
-        self, cpus: int, jobs: int
+    def test_runs_one_job_per_cpu_plus_one(
+        self, cpus: int, pool_gib: int, jobs: int
     ) -> None:
-        assert native_jobs_for(cpus) == jobs
+        assert native_jobs_for(cpus, pool_gib * 1024**3) == jobs
+
+    @pytest.mark.parametrize(
+        ("cpus", "pool_mib", "jobs"),
+        [
+            pytest.param(4, 2048, 3, id="four-cpus-two-gib-pool"),
+            pytest.param(8, 1280, 2, id="two-floors"),
+            pytest.param(8, 512, 1, id="below-one-floor"),
+        ],
+    )
+    def test_runs_no_more_jobs_than_fit_the_pool(
+        self, cpus: int, pool_mib: int, jobs: int
+    ) -> None:
+        assert native_jobs_for(cpus, pool_mib * 1024**2) == jobs
+
+    def test_stays_at_the_default_cap(self) -> None:
+        assert native_jobs_for(64, 64 * 1024**3) == host_cpus.MAX_DEFAULT_NATIVE_JOBS
 
     def test_rejects_a_count_below_one_cpu(self) -> None:
         with pytest.raises(ValueError, match="at least one CPU"):
-            native_jobs_for(0)
+            native_jobs_for(0, 1024**3)
+
+    def test_rejects_an_empty_pool(self) -> None:
+        with pytest.raises(ValueError, match="at least one byte"):
+            native_jobs_for(2, 0)
+
+
+class TestDefaultNativeJobs:
+    def test_sizes_the_pool_from_the_detected_memory(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core import host_memory
+
+        monkeypatch.setattr(host_memory, "memory_limit_bytes", lambda: 4 * 1024**3)
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 4)
+
+        assert host_cpus.default_native_jobs(0.5) == 3
+
+    def test_follows_the_configured_mesh_fraction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core import host_memory
+
+        monkeypatch.setattr(host_memory, "memory_limit_bytes", lambda: 4 * 1024**3)
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 4)
+
+        assert host_cpus.default_native_jobs(0.25) == 1
+
+    def test_keeps_half_the_memory_when_estimates_are_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core import host_memory
+
+        monkeypatch.setattr(host_memory, "memory_limit_bytes", lambda: 4 * 1024**3)
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 4)
+
+        assert host_cpus.default_native_jobs(0) == 3
+
+    def test_assumes_the_undetected_pool_without_a_memory_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core import host_memory
+
+        monkeypatch.setattr(host_memory, "memory_limit_bytes", lambda: None)
+        monkeypatch.setattr(host_cpus, "usable_cpus", lambda: 8)
+
+        assert host_cpus.default_native_jobs(0.5) == 3
+
+
+class TestInferenceJobsFor:
+    @pytest.mark.parametrize(
+        ("cpus", "jobs"),
+        [
+            pytest.param(1, 1, id="one-cpu"),
+            pytest.param(3, 1, id="three-cpus"),
+            pytest.param(4, 2, id="four-cpus"),
+            pytest.param(64, 4, id="sixty-four-cpus-stays-at-the-cap"),
+        ],
+    )
+    def test_runs_one_inference_per_two_cpus_within_bounds(
+        self, cpus: int, jobs: int
+    ) -> None:
+        assert host_cpus.inference_jobs_for(cpus) == jobs
+
+    def test_rejects_a_count_below_one_cpu(self) -> None:
+        with pytest.raises(ValueError, match="at least one CPU"):
+            host_cpus.inference_jobs_for(0)

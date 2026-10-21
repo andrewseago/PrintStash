@@ -13,11 +13,19 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 
-# Scale the automatic slot count by CPU availability. Memory admission
-# independently limits which native jobs can run together.
-CPUS_PER_NATIVE_JOB = 2
+# One native job per usable CPU plus one: measured on a mixed corpus, the extra
+# job keeps every core busy while another waits on its source or its outputs.
+EXTRA_NATIVE_JOBS = 1
+# A job that fits the pool alongside others claims at least the thumbnail
+# floor; more jobs than that only queue for memory.
+NATIVE_JOB_FLOOR_BYTES = 640 * 1024**2
+# Without a detected memory limit the native pool is this large.
+UNDETECTED_POOL_BYTES = 2 * 1024**3
 # Keep automatic concurrency bounded; explicit overrides remain available.
-MAX_DEFAULT_NATIVE_JOBS = 4
+MAX_DEFAULT_NATIVE_JOBS = 8
+# Local inference keeps its former default: one job per two CPUs, 1-4.
+CPUS_PER_INFERENCE_JOB = 2
+MAX_DEFAULT_INFERENCE_JOBS = 4
 
 _CGROUP_ROOT = Path("/sys/fs/cgroup")
 _SELF_CGROUP = Path("/proc/self/cgroup")
@@ -114,13 +122,31 @@ def usable_cpus(root: Path = _CGROUP_ROOT, self_cgroup: Path = _SELF_CGROUP) -> 
     return visible if quota is None else min(visible, quota)
 
 
-def native_jobs_for(cpus: int) -> int:
-    """One native job per two CPUs, at least one and at most four."""
+def native_jobs_for(cpus: int, pool_bytes: int) -> int:
+    """Native jobs that keep *cpus* busy and still fit a pool of *pool_bytes*."""
     if cpus < 1:
         raise ValueError("a process has at least one CPU")
-    return min(MAX_DEFAULT_NATIVE_JOBS, max(1, cpus // CPUS_PER_NATIVE_JOB))
+    if pool_bytes < 1:
+        raise ValueError("a native pool has at least one byte")
+    fitting = max(1, pool_bytes // NATIVE_JOB_FLOOR_BYTES)
+    return min(MAX_DEFAULT_NATIVE_JOBS, cpus + EXTRA_NATIVE_JOBS, fitting)
 
 
-def default_native_jobs() -> int:
-    """Default ``max_render_jobs`` for the CPUs this process can use."""
-    return native_jobs_for(usable_cpus())
+def default_native_jobs(memory_fraction: float) -> int:
+    """Default ``max_render_jobs`` for this process's CPUs and native pool."""
+    from app.core.host_memory import memory_limit_bytes
+
+    memory = memory_limit_bytes()
+    pool = (
+        UNDETECTED_POOL_BYTES
+        if memory is None
+        else max(1, int(memory * (memory_fraction or 0.5)))
+    )
+    return native_jobs_for(usable_cpus(), pool)
+
+
+def inference_jobs_for(cpus: int) -> int:
+    """One local inference per two CPUs, at least one and at most four."""
+    if cpus < 1:
+        raise ValueError("a process has at least one CPU")
+    return min(MAX_DEFAULT_INFERENCE_JOBS, max(1, cpus // CPUS_PER_INFERENCE_JOB))

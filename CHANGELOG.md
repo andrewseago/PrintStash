@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The default number of simultaneous mesh jobs now follows CPUs and memory:
+  one per usable CPU plus one, no more than fit the native memory pool, up to
+  eight. Two- and three-CPU installs used to process one file at a time and now
+  run three or four, so large imports finish in about half the time.
+  `VAULT_MAX_RENDER_JOBS` still overrides it; local AI inference keeps its own
+  default of one job per two CPUs unless that variable is set.
+
 - STEP measurements and previews no longer reserve the whole native memory
   pool. Each part is first admitted under 1 GiB, so STEP files are derived
   alongside other work instead of one at a time; a part that does not fit runs
