@@ -26,11 +26,15 @@ same local data root. Descriptor ownership recovers stale records across reboots
 and exact file size; its face count selects a memory weight. A 3MF package is
 streamed once without parsing its XML: object, component and build-item tags
 give the faces placed through every reachable placement, and the parts the
-reader will parse give its XML bytes. Both are upper bounds; the claim covers
-the measured whole-pipeline cost of each and the loader's own per-face ceiling.
-Fingerprint analysis of a 3MF, a package the scan cannot bound with certainty,
-and a scan that exceeds its 500 ms CPU or one-second wall allowance keep the
-whole-pool claim. Unknown complexity reserves the whole pool. Weights use the
+reader will parse give its XML bytes. Both are upper bounds. The same scan
+decides which reader the worker will use (see
+[retained 3MF scenes](retained-3mf-scenes.md#reading)), and the claim covers
+that reader's measured whole-pipeline cost and its loader ceiling: 512 MiB plus
+600 bytes per placed face or 6 per XML byte through lib3mf, and at least 3,600
+bytes per face through the XML reader. The answer is remembered per unchanged
+file, so a package's metadata and thumbnail scan it once. Fingerprint analysis
+of a 3MF, a package the scan cannot bound with certainty, and a scan that
+exceeds its 2 s CPU or 4 s wall allowance keep the whole-pool claim. Unknown complexity reserves the whole pool. Weights use the
 greater of the measured startup floor and historical whole-pipeline cost per
 face, capped by the configured pool. These are scheduling estimates; the hard
 process limit remains authoritative.

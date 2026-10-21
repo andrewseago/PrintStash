@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 3MF packages are read through lib3mf, the 3MF Consortium's reference
+  library, instead of an XML tree: large plates read two to three times faster
+  in a fraction of the memory, and packages that ran out of memory before now
+  get their dimensions and volume. Coordinates are read in single precision.
+  Packages lib3mf cannot read with the same meaning (extensions beyond
+  production, mixed units, production parts without a build, geometry far from
+  the origin) and arm64 installs keep the XML reader. 3MF memory claims and
+  loader ceilings follow the reader that will run, and existing 3MF
+  measurements, thumbnails and viewer previews are re-derived once; other mesh
+  formats are not.
+
 - 3MF thumbnails and measurements no longer reserve the whole native memory
   pool. The supervisor bounds each package's placed faces and parsed XML
   without parsing it, so small and medium 3MF files are derived side by side

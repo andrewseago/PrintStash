@@ -26,9 +26,10 @@ from sqlmodel import select
 
 from app.core.config import _overlay, settings
 from app.db.models import ArtifactDerivative, GeometryFingerprint
+from app.modules.derivatives import kinds
 from app.schemas.orca import OrcaNativeContext
 from tests.e2e._jobs import settle
-from tests.factories.geometry import three_mf
+from tests.factories.geometry import tetrahedron, three_mf
 from tests.factories.three_mf_pilot import load_case, opc_package
 from tests.fixtures.three_mf_projects import build_3d_builder_component_project
 from tests.paths import FIXTURES_DIR
@@ -720,6 +721,55 @@ class TestThreeMFAdmission:
         assert await _sample(api, *sized) > sized_before
 
 
+class TestThreeMFReader:
+    @pytest.mark.asyncio
+    async def test_a_3mf_is_derived_at_its_own_recipes(self, api, tmp_path, e2e_db):
+        """3MF outputs carry their reader's recipes; other meshes keep theirs."""
+        headers = await _setup_and_login(api, tmp_path)
+
+        uploaded = await api.post(
+            "/api/v1/ingest/model",
+            files={"file": ("part.3mf", three_mf(), "model/3mf")},
+            data={"model_name": "lib3mf recipes"},
+            headers=headers,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        job = await _await_job(api, headers, uploaded.json()["job_id"])
+        derivatives = await api.get(
+            f"/api/v1/files/{job['file_id']}/derivatives", headers=headers
+        )
+
+        assert {
+            row["kind"]: (row["state"], row["recipe_version"])
+            for row in derivatives.json()
+        } == {
+            "metadata": ("ready", kinds.THREE_MF_GEOMETRY_RECIPE),
+            "thumbnail": ("ready", kinds.THREE_MF_THUMBNAIL_RECIPE),
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_3mf_is_measured_in_single_precision(self, api, tmp_path, e2e_db):
+        """lib3mf reads each coordinate as the nearest float32 to its text."""
+        mesh = tetrahedron()
+        mesh.vertices += 0.1
+        headers = await _setup_and_login(api, tmp_path)
+
+        uploaded = await api.post(
+            "/api/v1/ingest/model",
+            files={"file": ("offset.3mf", three_mf(meshes={1: mesh}), "model/3mf")},
+            data={"model_name": "lib3mf precision"},
+            headers=headers,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        job = await _await_job(api, headers, uploaded.json()["job_id"])
+        model = await api.get(f"/api/v1/models/{job['model_id']}", headers=headers)
+        (artifact,) = model.json()["files"]
+
+        assert artifact["metadata"]["bbox_x_mm"] == float(np.float32(10.1)) - float(
+            np.float32(0.1)
+        )
+
+
 class TestHardlinklessStaging:
     @pytest.mark.asyncio
     async def test_uploads_with_visible_staging_degradation(
@@ -918,10 +968,10 @@ class TestMeshFailureRecovery:
         assert before.failure_reason == "resource_limit"
         assert before.next_attempt_at is None
         assert attempts == settings.derivative_max_attempts
-        assert before.recipe_version == kinds.MESH_GEOMETRY_RECIPE
+        assert before.recipe_version == kinds.THREE_MF_GEOMETRY_RECIPE
         thumbnail = await _thumbnail_derivative(api, headers, file_id)
         assert thumbnail["state"] == "ready"
-        assert thumbnail["recipe_version"] == kinds.MESH_THUMBNAIL_RECIPE
+        assert thumbnail["recipe_version"] == kinds.THREE_MF_THUMBNAIL_RECIPE
         assert _thumbnail_output(e2e_db, file_id)["strategy"] == "embedded"
         image_response = await api.get(
             f"/api/v1/files/{file_id}/thumbnail", headers=headers
@@ -942,7 +992,7 @@ class TestMeshFailureRecovery:
         assert after.state == "failed"
         assert after.failure_reason == "resource_limit"
         assert after.next_attempt_at is None
-        assert after.recipe_version == kinds.MESH_GEOMETRY_RECIPE
+        assert after.recipe_version == kinds.THREE_MF_GEOMETRY_RECIPE
         original = await api.get(f"/api/v1/files/{file_id}/download", headers=headers)
         assert original.status_code == 200, original.text
         assert original.content == data
