@@ -40,6 +40,10 @@ MESH_THUMBNAIL_RECIPE = 16
 THREE_MF_GEOMETRY_RECIPE = 13
 THREE_MF_THUMBNAIL_RECIPE = 17
 THREE_MF_VIEWER_STL_RECIPE = 4
+# STEP is tessellated at 0.05 mm linear deflection.
+STEP_GEOMETRY_RECIPE = 13
+STEP_THUMBNAIL_RECIPE = 17
+STEP_VIEWER_STL_RECIPE = 4
 GCODE_METADATA_RECIPE = 5
 GCODE_THUMBNAIL_RECIPE = 3
 TOOLPATH_RECIPE = 1
@@ -123,7 +127,11 @@ GROUPS: tuple[DerivativeGroup, ...] = (
             FileType.THREE_MF: {
                 DerivativeKind.METADATA: THREE_MF_GEOMETRY_RECIPE,
                 DerivativeKind.THUMBNAIL: THREE_MF_THUMBNAIL_RECIPE,
-            }
+            },
+            FileType.STEP: {
+                DerivativeKind.METADATA: STEP_GEOMETRY_RECIPE,
+                DerivativeKind.THUMBNAIL: STEP_THUMBNAIL_RECIPE,
+            },
         },
         label="Mesh geometry and thumbnails",
         applies=lambda: and_(_real(), col(File.file_type).in_(MESH_TYPES)),
@@ -147,7 +155,8 @@ GROUPS: tuple[DerivativeGroup, ...] = (
         definition=JobKind.DERIVATIVES_VIEWER_STL,
         recipes={DerivativeKind.VIEWER_STL: VIEWER_STL_RECIPE},
         format_recipes={
-            FileType.THREE_MF: {DerivativeKind.VIEWER_STL: THREE_MF_VIEWER_STL_RECIPE}
+            FileType.THREE_MF: {DerivativeKind.VIEWER_STL: THREE_MF_VIEWER_STL_RECIPE},
+            FileType.STEP: {DerivativeKind.VIEWER_STL: STEP_VIEWER_STL_RECIPE},
         },
         label="3D viewer previews",
         applies=lambda: and_(

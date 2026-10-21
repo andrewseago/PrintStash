@@ -40,6 +40,10 @@ class TestFaceCapacity:
     def test_weighs_an_xml_scene_by_the_xml_weight(self):
         assert native_budget.face_capacity(3600 * 1000, ".3mf") == 1000
 
+    @pytest.mark.parametrize("suffix", [".step", ".stp", ".STEP"], ids=str)
+    def test_weighs_a_step_mesh_by_the_step_weight(self, suffix):
+        assert native_budget.face_capacity(1500 * 1000, suffix) == 1000
+
     def test_ignores_the_lib3mf_weight_outside_3mf(self):
         assert native_budget.face_capacity(3000 * 1000, ".stl", lib3mf=True) == 1000
 

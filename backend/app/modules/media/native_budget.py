@@ -60,6 +60,10 @@ THREE_MF_LIB3MF_XML_BYTE_COST = 6
 # part dominates (about 1.2 s CPU for 155 MB of model XML). Packages lib3mf
 # reads claim a fraction of the pool even at 1.8M faces, so the scan is worth
 # finishing for them.
+# Whole-pipeline worker VmPeak for STEP over a mixed corpus: a 470 MiB start,
+# then 570-850 bytes per tessellated face; 1,500 keeps the loader's ceiling
+# inside the permit with headroom.
+STEP_FACE_BYTES = 1500
 THREE_MF_PREFLIGHT_WALL_SECONDS = 4.0
 THREE_MF_PREFLIGHT_CPU_SECONDS = 2.0
 # Optional text preflight must stay cheap in the supervisor. OBJ gets a
@@ -201,6 +205,8 @@ def request(
 def face_capacity(memory: int, suffix: str, *, lib3mf: bool = False) -> int:
     if type(memory) is not int or memory <= 0:
         raise ValueError("admitted memory must be a positive integer")
+    if suffix.lower() in (".step", ".stp"):
+        return memory // STEP_FACE_BYTES
     if suffix.lower() != ".3mf":
         return memory // DEFAULT_FACE_BYTES
     return memory // (THREE_MF_LIB3MF_FACE_BYTES if lib3mf else THREE_MF_FACE_BYTES)
