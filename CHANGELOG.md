@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- STEP files are tessellated at 0.05 mm instead of 0.01 mm, the precision the
+  similarity fingerprints already used: about a quarter of the triangles, so
+  STEP measurements, previews and viewer models are made roughly four times
+  faster in half the memory. Dimensions change by under 0.1% and previews are
+  visually unchanged. A STEP whose mesh exceeds the memory allowance is now
+  reported as a resource limit rather than an invalid file. Existing STEP
+  outputs are re-derived once; other formats are not.
+
 - 3MF packages are read through lib3mf, the 3MF Consortium's reference
   library, instead of an XML tree: large plates read two to three times faster
   in a fraction of the memory, and packages that ran out of memory before now

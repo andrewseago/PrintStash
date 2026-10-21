@@ -721,6 +721,39 @@ class TestThreeMFAdmission:
         assert await _sample(api, *sized) > sized_before
 
 
+class TestStepTessellation:
+    @pytest.mark.asyncio
+    async def test_a_step_is_derived_at_its_own_recipes(self, api, tmp_path, e2e_db):
+        """STEP outputs carry the 0.05 mm tessellation's recipes."""
+        headers = await _setup_and_login(api, tmp_path)
+
+        uploaded = await api.post(
+            "/api/v1/ingest/model",
+            files={
+                "file": (
+                    "part.stp",
+                    (FIXTURES_DIR / "cascadio_material.stp").read_bytes(),
+                    "model/step",
+                )
+            },
+            data={"model_name": "STEP recipes"},
+            headers=headers,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        job = await _await_job(api, headers, uploaded.json()["job_id"])
+        derivatives = await api.get(
+            f"/api/v1/files/{job['file_id']}/derivatives", headers=headers
+        )
+
+        assert {
+            row["kind"]: (row["state"], row["recipe_version"])
+            for row in derivatives.json()
+        } == {
+            "metadata": ("ready", kinds.STEP_GEOMETRY_RECIPE),
+            "thumbnail": ("ready", kinds.STEP_THUMBNAIL_RECIPE),
+        }
+
+
 class TestThreeMFReader:
     @pytest.mark.asyncio
     async def test_a_3mf_is_derived_at_its_own_recipes(self, api, tmp_path, e2e_db):

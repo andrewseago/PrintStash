@@ -282,6 +282,33 @@ class TestPending:
         [DerivativeKind.METADATA, DerivativeKind.THUMBNAIL],
         ids=lambda kind: kind.value,
     )
+    def test_rederives_a_step_from_the_shared_mesh_recipe(
+        self, db_session: Session, make_model, make_file, make_derivative, kind
+    ) -> None:
+        # STEP is now tessellated at 0.05 mm; its outputs at the shared mesh
+        # recipe were made from the 0.01 mm mesh.
+        artifact = make_file(
+            make_model(), filename="part.step", file_type=FileType.STEP
+        )
+        shared = {
+            DerivativeKind.METADATA: kinds.MESH_GEOMETRY_RECIPE,
+            DerivativeKind.THUMBNAIL: kinds.MESH_THUMBNAIL_RECIPE,
+        }
+        make_derivative(artifact, kind, recipe_version=shared[kind])
+        make_derivative(
+            artifact,
+            DerivativeKind.THUMBNAIL
+            if kind is DerivativeKind.METADATA
+            else DerivativeKind.METADATA,
+        )
+
+        assert _subjects(db_session) == [subject_key(artifact.id)]
+
+    @pytest.mark.parametrize(
+        "kind",
+        [DerivativeKind.METADATA, DerivativeKind.THUMBNAIL],
+        ids=lambda kind: kind.value,
+    )
     def test_rederives_a_3mf_from_the_shared_mesh_recipe(
         self, db_session: Session, make_model, make_file, make_derivative, kind
     ) -> None:

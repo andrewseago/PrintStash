@@ -126,6 +126,12 @@ def load_step_mesh(
                     if returncode == 3
                     else "invalid_step"
                 )
+            if returncode == 3 or failure == "memory budget":
+                # Tessellation outgrew the admitted memory: the part is valid,
+                # this allowance is not enough for it.
+                from printstash_core.mesh.similarity import GeometryError
+
+                raise GeometryError("resource_limit")
             logger.warning(
                 "mesh_processing: isolated STEP tessellation failed for %s (%s%s)",
                 path.name,

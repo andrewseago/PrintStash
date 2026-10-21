@@ -93,3 +93,11 @@ Native STEP GLB conversion uses serial OpenCASCADE tessellation. Its own paralle
 thread pool ignores OMP_NUM_THREADS and can exhaust address space through thread
 stacks under small budgets; serial execution keeps it inside the admitted worker.
 B-rep conversion propagates allocation failures to the resource-limit outcome.
+
+Every STEP mesh — measurements, previews, viewer conversion and fingerprints —
+is tessellated at 0.05 mm linear deflection: no facet lies farther than that
+from its exact surface. That is finer than an FDM print and below a pixel in a
+640 px preview of a 40 mm part. A mesh over the triangle ceiling, or a
+conversion over its memory allowance, is a `resource_limit`, not an invalid
+source. The loader weighs a tessellated STEP face at 1,500 bytes, above the
+570–850 bytes measured over a mixed corpus.

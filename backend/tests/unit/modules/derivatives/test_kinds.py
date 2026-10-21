@@ -54,9 +54,16 @@ class TestRecipesFor:
             THUMBNAIL: kinds.THREE_MF_THUMBNAIL_RECIPE,
         }
 
+    def test_a_step_gets_its_own_mesh_recipes(self) -> None:
+        # STEP is tessellated at 0.05 mm; only STEP Artifacts re-derive.
+        assert kinds.recipes_for(_file(FileType.STEP)) == {
+            METADATA: kinds.STEP_GEOMETRY_RECIPE,
+            THUMBNAIL: kinds.STEP_THUMBNAIL_RECIPE,
+        }
+
     @pytest.mark.parametrize(
         "file_type",
-        [FileType.STL, FileType.OBJ, FileType.STEP],
+        [FileType.STL, FileType.OBJ],
         ids=lambda file_type: file_type.value,
     )
     def test_other_meshes_keep_the_shared_mesh_recipes(
@@ -96,6 +103,13 @@ class TestGroups:
 
         assert viewer.recipes_for(FileType.THREE_MF) == {
             VIEWER_STL: kinds.THREE_MF_VIEWER_STL_RECIPE
+        }
+
+    def test_versions_a_step_viewer_preview_on_its_own(self) -> None:
+        viewer = kinds.group(JobKind.DERIVATIVES_VIEWER_STL)
+
+        assert viewer.recipes_for(FileType.STEP) == {
+            VIEWER_STL: kinds.STEP_VIEWER_STL_RECIPE
         }
 
     def test_keeps_the_shared_viewer_preview_recipe_for_other_meshes(self) -> None:
