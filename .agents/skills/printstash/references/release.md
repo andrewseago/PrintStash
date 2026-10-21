@@ -73,8 +73,9 @@ sweep). This file is the ordered checklist that ties it together.
       - **Confirm with the maintainer before opening any store PR or pushing to
         the Runtipi store.** They are public actions in other projects'
         repositories.
-      - Umbrel: a PR to `getumbrel/umbrel-apps`, run through that repository's
-        own `umbrel-update-app` and `umbrel-test-app` skills.
+      - Umbrel: the ordered steps below, then a PR to
+        `getumbrel/umbrel-apps` through that repository's own
+        `umbrel-update-app` and `umbrel-test-app` skills.
       - CasaOS / ZimaOS: a PR to `IceWhaleTech/CasaOS-AppStore`, validated with
         its `./scripts/build_dist.sh`.
       - Cosmos Cloud: a PR to `azukaar/cosmos-servapps-official`, after
@@ -89,6 +90,43 @@ sweep). This file is the ordered checklist that ties it together.
 - [ ] Announce in the public roadmap discussion. Changelog says what's
       protected; never quotes private `reports/` analysis.
 - [ ] Update the "Where we are" block in `SKILL.md` (this skill).
+
+## Umbrel App Store, every release
+
+`catalogues/umbrel/printstash/` and `printstash/` in `getumbrel/umbrel-apps` are
+the same package: the catalogue is the source, the store copy is what umbrelOS
+installs. Both move in one release, or the listing keeps serving the old image.
+`catalogues/README.md` holds the field-by-field contract; this is the order.
+
+1. Read the digest of the published image:
+   `docker buildx imagetools inspect ghcr.io/xiao-villamor/printstash:X.Y.Z`
+   must list `linux/amd64` and `linux/arm64`. Copy the digest it reports for
+   that tag; it is the multi-arch index digest, not a per-architecture one.
+2. In the release commit, bump `version` and set
+   `image: ghcr.io/xiao-villamor/printstash:X.Y.Z@sha256:<digest>`.
+   `tests/repo/test_catalogue_manifests.py` fails until the tag equals the app
+   version and the digest is a full-length one, so the two cannot drift.
+3. Replace `releaseNotes` with this release's notes from the CHANGELOG entry:
+   user-visible features, fixes, and any upgrade or backup action, plus the
+   upstream release link. Keep two blank lines between paragraphs and one
+   before and between list items; YAML folds single newlines into spaces.
+   Never leave the previous version's notes in place, and never write the
+   notes only in the store copy.
+4. Copy `catalogues/umbrel/printstash/` over `printstash/` in your fork and
+   follow `umbrel-update-app`. `submission` keeps pointing at the first PR;
+   the store does not track later ones. Leave `gallery`, `icon` and
+   `storage: dataRoot: data` as they are.
+5. `npm run lint:apps -- printstash --check-images` must pass, and its digest
+   check must resolve to the digest in the compose file, then `git diff
+   --check`.
+6. Test through `umbrel-test-app`: install on umbrelOS, sign in with the
+   credentials Umbrel shows, choose storage, upload a model, restart, and
+   confirm the library survives. A release that cannot be installed that way
+   is not ready.
+7. Open the PR, link it from the GitHub release notes, and record anything
+   the maintainers change (a reassigned port, a pinned image, edited copy)
+   back into `catalogues/umbrel/printstash/` in the same release. Otherwise
+   the next release reintroduces it.
 
 ## GitHub release format
 

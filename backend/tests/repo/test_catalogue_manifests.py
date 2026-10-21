@@ -13,6 +13,7 @@ manifest follows.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -97,7 +98,11 @@ class TestEveryCatalogue:
     def test_runs_the_unified_image_at_the_app_version(self, store: str) -> None:
         image = _service(store)["image"]
 
-        assert image == f"{IMAGE}:{settings.app_version}", (
+        # Umbrel appends the multi-arch index digest it pins. The tag in front of
+        # it is still what ties the manifest to the release.
+        reference = image.split("@", 1)[0]
+
+        assert reference == f"{IMAGE}:{settings.app_version}", (
             "bump every catalogue manifest in the release commit"
         )
 
@@ -256,6 +261,29 @@ class TestRuntipi:
 
 
 class TestUmbrel:
+    def test_pins_the_image_with_the_store_digest(self) -> None:
+        # The store rejects a tag without its digest, and the digest is what keeps
+        # the listing on the release that was tested. It must be the multi-arch
+        # index digest, so the tag resolves to the same image on both platforms.
+        image = _service("umbrel")["image"]
+
+        assert re.fullmatch(
+            rf"{re.escape(IMAGE)}:{re.escape(settings.app_version)}@sha256:[0-9a-f]{{64}}",
+            image,
+        ), "pin ghcr.io/xiao-villamor/printstash:X.Y.Z@sha256:<index digest>"
+
+    def test_declares_the_data_root_the_store_moves(self) -> None:
+        # umbrelOS 2.0 moves this folder when a user relocates app data. Without
+        # it a relocated install starts empty, and it cannot be removed later.
+        manifest = _load(UMBREL / "umbrel-app.yml")
+
+        assert manifest["storage"] == {"dataRoot": "data"}
+
+    def test_ships_the_directory_the_data_mounts_from(self) -> None:
+        # compose mounts ${APP_DATA_DIR}/data; a missing source directory is what
+        # makes a first start fail before the app can create it.
+        assert (UMBREL / "data").is_dir()
+
     def test_routes_the_app_proxy_to_the_web_service(self) -> None:
         proxy = _load(UMBREL / "docker-compose.yml")["services"]["app_proxy"]
 
