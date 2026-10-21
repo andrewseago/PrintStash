@@ -1,10 +1,17 @@
 manifestVersion: 1
 id: printstash
+storage:
+  dataRoot: data
 category: files
 name: PrintStash
 version: "0.14.0"
 tagline: A self-hosted library for 3D models and the G-code that prints them
 description: >-
+  Sign in with the username and password Umbrel shows for this app, then choose
+  where PrintStash stores your files. Both steps happen in the browser; nothing
+  needs a terminal.
+
+
   PrintStash keeps your 3D models, sliced G-code revisions and print history in
   one searchable library on your own server.
 
@@ -19,15 +26,7 @@ description: >-
 
   - Send prints and follow jobs on Klipper/Moonraker, with beta support for
   OctoPrint, PrusaLink, Bambu Lab (LAN) and Elegoo printers.
-
-
-  Sign in with the username and password Umbrel shows for this app, then choose
-  where PrintStash stores your files.
-releaseNotes: >-
-  Version 0.14.0 adds durable background jobs, guided first-run setup, AI Search
-  and Similar Models, verified Vault migration, and faster single-volume imports.
-  Back up and follow UPGRADE.md before upgrading: Compose volume layout and
-  several Jobs and Artifact download API endpoints change.
+releaseNotes: ""
 developer: PrintStash contributors
 website: https://www.printstash.org
 dependencies: []
@@ -40,5 +39,5 @@ path: ""
 # docker-compose.yml passes them to VAULT_SETUP_ADMIN_*.
 defaultUsername: "admin"
 deterministicPassword: true
-submitter: PrintStash contributors
+submitter: Jorge Hermo
 submission: ""
