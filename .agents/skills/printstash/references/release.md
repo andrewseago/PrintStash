@@ -128,6 +128,59 @@ installs. Both move in one release, or the listing keeps serving the old image.
    back into `catalogues/umbrel/printstash/` in the same release. Otherwise
    the next release reintroduces it.
 
+## App-store packages ship the tagged release
+
+A store pull request pins one tag with its digest, so a package may only set what
+that release reads. `catalogues/` tracks `main`, and
+`tests/repo/test_catalogue_manifests.py` validates it against the working tree's
+`Settings`, so a package can run ahead of the release it is submitted for.
+
+Before opening any store pull request, read the settings at the tag:
+
+```sh
+git show vX.Y.Z:backend/app/core/config.py
+```
+
+Every variable the package sets must appear there. A variable added after the tag
+is inert in the image the store installs, because `Settings` is `extra="ignore"`:
+decide once per release whether to ship it anyway and say so in the pull request
+body, or hold it until the release that reads it. v0.14.0 is the worked example.
+`VAULT_MESH_MEMORY_BUDGET_FRACTION` is in it; `VAULT_COMPUTE_MODE`,
+`VAULT_COMPUTE_MEMORY_MB` and `VAULT_EMBEDDING_MEMORY_BUDGET_FRACTION` landed
+after that tag.
+
+## App Store first submission, once per store
+
+`catalogues/README.md` is the per-store contract. This is the order the first
+submission adds on top of a release. Umbrel is written out because it is already
+packaged; the other stores follow the same shape with their own paths and checks.
+
+1. Fork the store repository and branch `printstash-X.Y.Z` from its default
+   branch.
+2. Copy `catalogues/umbrel/printstash/` to `printstash/` at the store root,
+   `data/.gitkeep` included. The package is not `apps/printstash/`.
+3. Leave `gallery: []`, omit `icon`, keep `submitter`, and leave
+   `submission: ""` for the moment.
+4. Run `npm run lint:apps -- printstash --check-images`. `submission` is the one
+   error that cannot be fixed before the pull request exists. Every other error
+   is real, and `restart: unless-stopped` is the one expected warning: a restart
+   requested from Settings is a graceful exit that can return status 0, which
+   `on-failure` would not relaunch.
+5. Open the pull request, then set `submission` to its URL in a second commit on
+   the same branch. The linter rejects an empty `submission`, so the first push
+   cannot be clean; after that second commit it is.
+6. Put in the body: app version, upstream project URL, image source, testing
+   performed, default credentials, the restart decision, the `app_proxy`
+   decision and what stays behind Umbrel's login, plus screenshots and a logo
+   reference. Never commit gallery or icon assets; the Umbrel team creates the
+   official ones before merge.
+7. Test through `umbrel-test-app` before asking for review: install on umbrelOS,
+   sign in with the credentials Umbrel shows, choose storage, upload a model,
+   restart, and confirm the library survives.
+8. Once merged, the listing lives at `https://apps.umbrel.com/app/printstash`.
+   That page is the citation target for the change, so record the URL in the
+   release notes and in the work that prompted it.
+
 ## GitHub release format
 
 Match existing releases (`v0.8.3`, `v0.8.1`):
