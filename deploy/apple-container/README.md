@@ -51,11 +51,20 @@ To run the app itself on `container`, see [APP.md](APP.md).
    System Settings > Privacy & Security > Local Network; container addresses need
    the terminal app allowed. The adapter checks both and says which is missing.
 
+5. **Use a Python whose `sqlite3` can load extensions.** The python.org build
+   cannot, so sqlite-vec fails to load. Homebrew's can:
+
+   ```bash
+   cd backend
+   UV_SYSTEM_CERTS=1 uv sync --python /opt/homebrew/bin/python3.14 --extra dev --extra full --frozen
+   ```
+
 ## What runs where
 
 | Marker or area | On Apple container |
 | --- | --- |
 | `postgres`, `s3`, `remote_storage` | yes, through the adapter, except the tests that need Nextcloud |
+| tests that start mesh workers or need verified local storage (see [Linux lane](#linux-lane)) | no on macOS itself; yes in the Linux lane |
 | tests that need Nextcloud: the `nextcloud` parametrizations and the WebDAV presets (`synology_webdav`, `qnap_webdav`, `hetzner_storage_box_webdav`, `koofr`) in `test_real_provider.py`, `test_webdav_cleanup.py`, `test_storage_providers.py`, `test_remote_backup.py` and `test_remote_library_scan.py` | no: Nextcloud is not run on Apple container |
 | `bgcode` | no: builds the converter with `docker buildx` |
 | `tests/e2e/test_search_image_proxy.py`, `tests/e2e/test_search_query_logs.py` | no: run nginx with `docker run --network host` |
@@ -83,11 +92,17 @@ Measured on an M5 Max, macOS 27.2, `container` 1.5.0:
   files listed in `NEXTCLOUD_FILES` whose name or parameter id contains an entry of
   `NEXTCLOUD_IDS`. A test that reaches Nextcloud without matching fails with a message
   saying how to classify it.
-- **Many tests fail on this Mac with or without the adapter**, because of macOS, not
-  the runtime: the native mesh and inference workers exit non-zero (`worker_failed`),
-  the local filesystem probe reports no verified delete (so storage runs in the
-  "guarded" tier), and sqlite-vec is not loadable. About 650 tests in the `pr` lane
-  fail the same way on an unmodified `main`.
+- **Some tests cannot pass on macOS itself**, whatever runs the services, because the
+  code under test assumes Linux:
+  - mesh workers cap their address space with `RLIMIT_AS`, which macOS rejects
+    (`ValueError: current limit exceeds maximum limit`), so they exit and report
+    `worker_failed`;
+  - local storage is classified from `/proc/self/mountinfo`, which macOS lacks, so the
+    filesystem is "unknown" and storage drops to the "guarded" tier.
+
+  The [Linux lane](#linux-lane) runs those tests where both hold. About 650 tests in
+  the `pr` lane fail on macOS for the same reasons on an unmodified `main`; the lane
+  covers the resource-marked ones, not the whole `pr` lane.
 - Image pulls, volume creation and the first run of an image unpack it, so a cold
   run is slower than Docker's.
 
@@ -128,6 +143,43 @@ PYTEST_XDIST_AUTO_NUM_WORKERS=4 ./scripts/test.sh e2e tests/e2e/test_opendal_gc.
 ```
 
 To bypass the adapter and use Docker, even on a Mac: `-p no:tests.apple_container`.
+
+## Linux lane
+
+`backend/scripts/linux_lane.py` runs pytest inside a Linux arm64 container, where
+`RLIMIT_AS` is enforced and `/proc/self/mountinfo` exists. The services are still
+started on the Mac by the adapter; the lane gives the container their container
+addresses (a container cannot start siblings, and the Mac's `127.0.0.1` is not
+reachable from inside it).
+
+```bash
+cd backend
+.venv/bin/python scripts/linux_lane.py --services postgres,s3,sftp -- \
+  -m "(postgres or s3 or remote_storage) and not coverage_gate and not scale and not bgcode" \
+  tests/e2e/test_split_topology.py tests/e2e/test_job_engine.py -q
+```
+
+Everything after `--` goes to pytest; `--services` takes some of `postgres`,
+`pgvector`, `s3`, `sftp` (default `postgres,s3,sftp`), and `--cpus` / `--memory`
+(default 8 / 8G; mesh workers need more than the 1 GiB default) size the container.
+
+- **What it runs:** only what pytest selects. It is not the whole suite: `bgcode`
+  needs the converter binary the image lacks, Playwright is not covered, and xdist was
+  not tried. The tests that need Nextcloud are left out the way the adapter leaves
+  them out.
+- **Dependencies:** containers may have no route to PyPI (a VPN blocks it here), so the
+  locked dependencies are installed on the host as Linux wheels into
+  `~/Library/Caches/printstash-linux-lane/deps-<uv.lock hash>` (about 1 GB, built once
+  per lockfile; `--rebuild-deps` forces it) and mounted read-only. A dependency with
+  no `aarch64-manylinux_2_31` wheel fails that install.
+- **Image:** `python:3.14.8-slim-trixie`, the Dockerfile's base. No build step. The
+  source is copied in each run, so edits during a run are not seen.
+- **Cleanup:** the launcher removes the test container and the services when it ends,
+  including on Ctrl-C and `kill`. After a hard kill, `container list --all` shows
+  `printstash-linux-lane-*` and `printstash-test-*`; the next adapter run reaps the
+  services, and `container delete --force <name>` removes the rest.
+- **Plugin:** `tests/linux_lane_services.py` reads `PRINTSTASH_TEST_SERVICES_FILE` and
+  does nothing without it. It stops the run naming any service it cannot reach.
 
 ## Processes outside pytest
 

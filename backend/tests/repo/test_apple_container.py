@@ -48,7 +48,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -2138,11 +2138,15 @@ def _docker_cli_users() -> set[str]:
     return users
 
 
+# Tests of the stand-ins for these functions call them without needing a daemon.
+STAND_IN_TESTS: Final = ("test_apple_container.py", "test_linux_lane.py")
+
+
 def _require_docker_callers() -> set[str]:
     return {
         str(path.relative_to(TESTS_DIR))
         for path in TESTS_DIR.rglob("test_*.py")
-        if path.name != Path(__file__).name
+        if path.name not in STAND_IN_TESTS
         and any(
             isinstance(node, ast.Call)
             and getattr(node.func, "attr", "") in ("require_docker", "docker_available")
