@@ -89,7 +89,10 @@ One pass (`work.reconciler.run_pass`) per definition, claimed through its
    follows commit. A lost or expired holder cannot admit work.
 3. **Continue or stop.** A full batch that created Jobs while the lane still had
    room runs again immediately. A full lane stops; each Job's completion nudges
-   its source. A nudge that arrived during the pass (the dirty mark,
+   its source. Starting an interactive Job from a prioritized source also nudges
+   it, because running interactive Jobs no longer consume the pending allowance.
+   That lets a successor queue during the current attempt without enlarging
+   either priority's cap. A nudge that arrived during the pass (the dirty mark,
    `nudged_at`) makes the pass run once more before it releases.
 
 A completion always nudges the definitions it names (`completion_nudges`). It
@@ -130,6 +133,16 @@ recovery. Because the engine finds queued work only by polling, that
 submission also boosts its lane's polling for a few seconds: the Job is picked
 up sooner, and so is the rest of a batch that follows it.
 
+On SQLite, accepted immediate interactive Jobs on FIFO lanes also use that
+temporary boost, as do the reconcile passes discovering their work. Duplicate,
+delayed and backfill submissions do not start or renew this automatic boost.
+SQLite's process lock and topology guard ensure a single engine owner. The
+extension does not apply to PostgreSQL: its queue configuration is shared by
+multiple processes, while boost expiry is local to each process. Existing
+explicit request boosts keep their current policy. A boost changes polling
+configuration through the engine SDK; it does not interrupt a poll already
+waiting, and is a latency hint rather than an execution guarantee.
+
 The dirty mark is a write, so it travels with a write that already happens.
 `nudge_after_commit` stamps it as the caller's transaction commits, and a Job's
 terminal write stamps the sources its completion affects; only the pass is
@@ -149,7 +162,9 @@ one each. The shared read never holds a lock other steps wait on.
 
 A Job attempt writes as rarely as its guarantees allow:
 
-- **Begin** claims the attempt.
+- **Begin** claims the attempt and, for interactive work from a prioritized
+  source, registers an after-commit nudge. On SQLite its dirty mark commits
+  with the claim, without a second writer transaction.
 - **Progress** a step reports in the first `JOBS_PROGRESS_HOLD_SECONDS` of its
   attempt is held in memory and merged into the next write, so an attempt that
   ends sooner never pays for reports nobody could read. Past the hold each
@@ -309,6 +324,10 @@ both Compose files run the first with no setting.
 
 Administrators override lane concurrency at runtime on Settings → Background
 work; the override is stored in the database and applies to every process.
+The same page sets the native mesh job count (`max_render_jobs`, stored in
+`system_config`): the process that saves it re-resolves the `derive.native`
+lane at once, a lane override still wins, and worker processes read it when
+they start.
 
 Native memory is bounded by shared CPU/RAM admission across API and worker
 processes, independent of lane count. A request reserves its complete geometry,

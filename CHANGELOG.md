@@ -2,11 +2,82 @@
 
 ## Unreleased
 
+- Importing a ZIP no longer wakes the derivative passes after every file. They
+  would only wait for the import to end, so they now stay asleep until it does,
+  leaving the database to the import, so large ZIPs import and finish
+  processing sooner.
+
+- A ZIP prepared while the server's clock stepped back (an NTP or virtual
+  machine time resync) no longer stays at *Queued* forever: the Task Center
+  now offers *Choose files* as soon as the preparation ends, whatever time the
+  server stamped on it.
+
+- Administrators choose how many models are processed at once on Settings →
+  Background work → Worker settings. *Automatic* keeps the CPU-and-memory
+  default; a chosen count may go up to what the native memory pool fits,
+  overrides `VAULT_MAX_RENDER_JOBS`, and applies without a restart (separate
+  worker processes apply it when they restart). *Use default* clears it.
+
+- The default number of simultaneous mesh jobs now follows CPUs and memory:
+  one per usable CPU plus one, no more than fit the native memory pool, up to
+  eight. Two- and three-CPU installs used to process one file at a time and now
+  run three or four, so large imports finish in about half the time.
+  `VAULT_MAX_RENDER_JOBS` still overrides it; local AI inference keeps its own
+  default of one job per two CPUs unless that variable is set.
+
+- STEP measurements and previews no longer reserve the whole native memory
+  pool. Each part is first admitted under 1 GiB, so STEP files are derived
+  alongside other work instead of one at a time; a part that does not fit runs
+  once more with the whole pool, and nothing is published twice. A new
+  `mesh_escalation` log and `printstash_mesh_escalations_total` counter report
+  those reruns.
+
+- STEP files are tessellated at 0.05 mm instead of 0.01 mm, the precision the
+  similarity fingerprints already used: about a quarter of the triangles, so
+  STEP measurements, previews and viewer models are made roughly four times
+  faster in half the memory. Dimensions change by under 0.1% and previews are
+  visually unchanged. A STEP whose mesh exceeds the memory allowance is now
+  reported as a resource limit rather than an invalid file. Existing STEP
+  outputs are re-derived once; other formats are not.
+
+- 3MF packages are read through lib3mf, the 3MF Consortium's reference
+  library, instead of an XML tree: large plates read two to three times faster
+  in a fraction of the memory, and packages that ran out of memory before now
+  get their dimensions and volume. Coordinates are read in single precision.
+  Packages lib3mf cannot read with the same meaning (extensions beyond
+  production, mixed units, production parts without a build, geometry far from
+  the origin) and arm64 installs keep the XML reader. 3MF memory claims and
+  loader ceilings follow the reader that will run, and existing 3MF
+  measurements, thumbnails and viewer previews are re-derived once; other mesh
+  formats are not.
+
+- 3MF thumbnails and measurements no longer reserve the whole native memory
+  pool. The supervisor bounds each package's placed faces and parsed XML
+  without parsing it, so small and medium 3MF files are derived side by side
+  instead of one at a time. Fingerprint analysis, packages that cannot be
+  bounded, and very large packages keep the whole-pool claim. A new
+  `mesh_estimate` log and `printstash_mesh_estimate_duration_seconds` histogram
+  report each claim.
+
+- Library Back and Forward keep the same visible reading position when a
+  revision notice changes the page height.
+
+- Refresh library now recovers an initial read rejected by concurrent changes,
+  even before the first page has loaded.
+
+- Ingestion qualification returns idle capacity credits during drain instead of
+  depending on the work heartbeat's timing. Active reservations remain protected.
+
 - PrintStash now keeps a manifest for the Cosmos Cloud market
   (`azukaar/cosmos-servapps-official`) next to the other store catalogues, with the
   install dialog creating the first administrator and the same memory budgets the
   other stores pass. Nothing changes for existing installations; the store
   submission is a separate step, described in `catalogues/README.md`.
+
+- SQLite installations temporarily poll interactive derivative work and its
+  discovery passes more frequently after accepting a submission. Duplicate,
+  delayed and backfill submissions keep the ordinary polling policy; the
+  temporary interval expires after activity stops.
 
 - The Model filters panel lists G-code below a divider, after the source formats
   it is sliced from, and writes formats as STL, 3MF, OBJ, STEP, DXF and G-code.
@@ -31,6 +102,9 @@
   (`VAULT_JOBS_QUEUE_POLL_INTERVAL_SECONDS`, now 1.0). On a 4-core test server
   with 300 Models, idle CPU fell from 11.4% to 6.1% of one core (0.14.0: 6.1%),
   and uploads start as soon as before.
+
+- Interactive background work can prepare its next queued job while the
+  current job runs, using the existing queue and admission limits.
 
 - Search projection waits for an import to finish, like thumbnails do. Its
   writes competed with the import for SQLite's single writer. A 300-file ZIP
@@ -75,6 +149,10 @@
   disconnected peers without the same descriptor limit. Warm workers preserve
   high-numbered resource permits and close every unrelated descriptor before
   processing a model.
+
+- Native mesh processing now chooses a bounded concurrency default from the CPUs
+  available to PrintStash. Explicit concurrency settings and shared memory
+  admission continue to apply.
 
 - An idle server on SQLite no longer uses more CPU the longer it runs. Each
   background-work lane keeps checking for queued work on a short interval, and on
